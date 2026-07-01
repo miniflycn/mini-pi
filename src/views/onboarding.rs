@@ -7,9 +7,7 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::tab::{Tab, TabBar};
-use gpui_component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, Size, WindowExt as _,
-};
+use gpui_component::{ActiveTheme as _, Disableable as _, Sizable as _, Size, WindowExt as _};
 
 use crate::auth::state;
 use crate::config::model_config;
@@ -52,10 +50,7 @@ impl OnboardingPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let window_handle = window.window_handle();
 
-        let api_key_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("API key")
-        });
+        let api_key_input = cx.new(|cx| InputState::new(window, cx).placeholder("API key"));
 
         let provider_dropdown =
             cx.new(|cx| SelectState::new(SearchableVec::new(Vec::new()), None, window, cx));
@@ -73,7 +68,11 @@ impl OnboardingPanel {
 
         let files = state::list_pi_agent_json_files();
         let pi_dir_exists = state::pi_dir_exists();
-        let active_tab = if pi_dir_exists && !files.is_empty() { 1 } else { 0 };
+        let active_tab = if pi_dir_exists && !files.is_empty() {
+            1
+        } else {
+            0
+        };
 
         let mut panel = Self {
             files,
@@ -97,7 +96,11 @@ impl OnboardingPanel {
         self.files = state::list_pi_agent_json_files();
         self.pi_dir_exists = state::pi_dir_exists();
         self.saving = false;
-        self.active_tab = if self.pi_dir_exists && !self.files.is_empty() { 1 } else { 0 };
+        self.active_tab = if self.pi_dir_exists && !self.files.is_empty() {
+            1
+        } else {
+            0
+        };
         if self.providers.is_empty() && !self.loading_providers {
             self.load_providers(cx);
         }
@@ -251,16 +254,8 @@ impl OnboardingPanel {
         cx.notify();
     }
 
-    pub fn render_dialog_content(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let mut panel = div()
-            .id("onboarding-panel")
-            .flex()
-            .flex_col()
-            .size_full();
+    pub fn render_dialog_content(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let mut panel = div().id("onboarding-panel").flex().flex_col().size_full();
 
         if self.pi_dir_exists {
             panel = panel.child(self.render_tab_bar(cx));
