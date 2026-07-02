@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use gpui::{
     Anchor, AnyWindowHandle, App, Bounds, ClickEvent, Context, ElementId, FocusHandle, Focusable,
-    IntoElement, MouseButton, ParentElement, Render, RenderOnce, SharedString, Styled, Window, div,
-    prelude::*, px, size, svg,
+    IntoElement, MouseButton, ParentElement, Render, RenderOnce, SharedString, Styled, Window,
+    WindowId, div, prelude::*, px, size, svg,
 };
 
 use crate::auth::state;
@@ -34,6 +34,7 @@ struct ThreadListItem {
     confirming: bool,
     is_streaming: bool,
     has_new_activity: bool,
+    is_window_open: bool,
 }
 
 impl Selectable for ThreadListItem {
@@ -59,6 +60,7 @@ impl RenderOnce for ThreadListItem {
             confirming,
             is_streaming,
             has_new_activity,
+            is_window_open,
         } = self;
 
         let theme = cx.theme().clone();
@@ -128,8 +130,8 @@ impl RenderOnce for ThreadListItem {
             .py_2()
             .border_b_1()
             .border_color(theme.border)
-            .when(selected, |el| el.bg(theme.list_active))
-            .when(!selected && hovered, |el| el.bg(theme.secondary_hover))
+            .when(is_window_open, |el| el.bg(theme.secondary))
+            .when(!is_window_open && hovered, |el| el.bg(theme.secondary_hover))
             .cursor_pointer()
             .flex()
             .flex_row()
@@ -516,15 +518,14 @@ impl ListDelegate for ThreadListDelegate {
         cx: &mut Context<ListState<Self>>,
     ) -> Option<Self::Item> {
         let thread = self.thread_at(ix)?;
-        let is_streaming = cx
-            .global::<AppStore>()
-            .is_thread_streaming(&thread.id);
+        let is_streaming = cx.global::<AppStore>().is_thread_streaming(&thread.id);
         let has_new_activity = thread
             .metadata
             .as_ref()
             .and_then(|md| md.get("has_new_activity").and_then(|v| v.as_bool()))
             .unwrap_or(false);
         let confirming = self.confirming_id.as_ref() == Some(&thread.id);
+        let is_window_open = cx.global::<AppStore>().is_thread_window_open(&thread.id);
 
         Some(ThreadListItem {
             ix,
@@ -536,6 +537,7 @@ impl ListDelegate for ThreadListDelegate {
             confirming,
             is_streaming,
             has_new_activity,
+            is_window_open,
         })
     }
 
@@ -593,6 +595,7 @@ pub struct ThreadList {
     pub _list_subscription: gpui::Subscription,
     pub _search_focus_subscription: gpui::Subscription,
     pub _search_input_subscription: gpui::Subscription,
+    pub _window_close_subscription: gpui::Subscription,
 }
 
 impl ThreadList {
@@ -632,6 +635,19 @@ impl ThreadList {
             this.refresh_threads(cx);
         });
 
+        let list_state_for_window_close = list_state.clone();
+        let window_close_subscription =
+            cx.on_window_closed(move |cx, closed_window_id: WindowId| {
+                cx.update_global::<AppStore, _>(|app_store, _| {
+                    app_store
+                        .thread_windows
+                        .retain(|_, handle| handle.window_id() != closed_window_id);
+                });
+                cx.update_entity(&list_state_for_window_close, |_, cx| {
+                    cx.notify();
+                });
+            });
+
         let list_subscription = cx.subscribe(&list_state, |this, _, event: &ListEvent, cx| {
             if let ListEvent::Confirm(ix) = event {
                 if let Some(thread) = this.list_state.read(cx).delegate().thread_at(*ix) {
@@ -668,6 +684,7 @@ impl ThreadList {
             _list_subscription: list_subscription,
             _search_focus_subscription: search_focus_subscription,
             _search_input_subscription: search_input_subscription,
+            _window_close_subscription: window_close_subscription,
         };
 
         if show_onboarding {
