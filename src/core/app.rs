@@ -31,9 +31,52 @@ pub struct AppStore {
     pub user_panel_active: bool,
     pub pi_bridge: Option<Arc<PiBridge>>,
     pub session_manager: SessionManager,
-    pub streaming_thread_ids: HashSet<String>,
+    streaming_thread_ids: HashSet<String>,
     pub remote_controller: Option<Entity<RemoteController>>,
     pub models: Vec<ModelInfo>,
+}
+
+impl AppStore {
+    pub fn new(
+        store: Arc<Store>,
+        config: AppConfig,
+        auth: AuthState,
+        session: Option<SupabaseSession>,
+        sync_meta: SyncMeta,
+        pi_bridge: Option<Arc<PiBridge>>,
+        remote_controller: Option<Entity<RemoteController>>,
+        models: Vec<ModelInfo>,
+    ) -> Self {
+        Self {
+            store,
+            config,
+            thread_windows: HashMap::new(),
+            main_window: None,
+            pi_settings_window: None,
+            auth,
+            session,
+            sync_meta,
+            sync_status: SyncStatus::Idle,
+            user_panel_active: false,
+            pi_bridge,
+            session_manager: SessionManager::new(),
+            streaming_thread_ids: HashSet::new(),
+            remote_controller,
+            models,
+        }
+    }
+
+    pub fn set_thread_streaming(&mut self, thread_id: String, streaming: bool) {
+        if streaming {
+            self.streaming_thread_ids.insert(thread_id);
+        } else {
+            self.streaming_thread_ids.remove(&thread_id);
+        }
+    }
+
+    pub fn is_thread_streaming(&self, thread_id: &str) -> bool {
+        self.streaming_thread_ids.contains(thread_id)
+    }
 }
 
 impl Global for AppStore {}

@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use gpui::{
     App, Application, Bounds, KeyBinding, Menu, MenuItem, MouseButton, SharedString, Window,
@@ -22,7 +19,7 @@ use crate::core::actions::{
 use crate::core::app::AppStore;
 use crate::core::app::apply_font_size;
 use crate::core::assets::Assets;
-use crate::core::session_manager::SessionManager;
+
 use crate::data::store::Store;
 use crate::remote::RemoteController;
 use crate::rpc::pi_rpc::PiBridge;
@@ -139,23 +136,16 @@ pub fn run() {
             let remote_controller =
                 cx.new(|cx| RemoteController::new(cx, config.remote_control.clone()));
 
-            cx.set_global(AppStore {
-                store: store.clone(),
-                config: config.clone(),
-                thread_windows: HashMap::new(),
-                main_window: None,
-                pi_settings_window: None,
-                auth: auth.clone(),
-                session: session.clone(),
+            cx.set_global(AppStore::new(
+                store.clone(),
+                config.clone(),
+                auth.clone(),
+                session.clone(),
                 sync_meta,
-                sync_status: settings_sync::SyncStatus::Idle,
-                user_panel_active: false,
-                pi_bridge: pi_bridge.clone(),
-                session_manager: SessionManager::new(),
-                streaming_thread_ids: HashSet::new(),
-                remote_controller: Some(remote_controller),
+                pi_bridge.clone(),
+                Some(remote_controller),
                 models,
-            });
+            ));
 
             if auth.is_logged_in() {
                 if let Some(ref sess) = session {

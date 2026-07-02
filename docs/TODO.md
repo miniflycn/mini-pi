@@ -11,17 +11,15 @@
 - [x] Basic support for extension UI protocol
 - [x] Better on-boarding experience
 - [x] Display session stats in the status bar
+- [x] Add a button to scroll to the bottom when user just scrolled
+- [x] Thread title can be changed by clicking on it
 - [ ] Message display optimization, virtualize it
 - [ ] Steering, follow up and message queue
 - [ ] Support bearer token settings for tunnel
 - [ ] Auto update and release channel
 - [ ] Pet window
 - [ ] Extensive support for UI protocol
-
-# UI
-- [x] Add a button to scroll to the bottom when user just scrolled
 - [ ] Show no more than two rows of thinking and make it default collapsed
-- [ ] Thread title can be changed by clicking on it
 
 # Pi-Commander
 - [x] Cannot stop

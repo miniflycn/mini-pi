@@ -681,7 +681,7 @@ impl ChatWindow {
                 self.thread_id = Some(tid.clone());
             }
             cx.update_global(|app: &mut AppStore, _| {
-                app.streaming_thread_ids.insert(tid.clone());
+                app.set_thread_streaming(tid.clone(), true);
             });
         }
 
@@ -709,7 +709,7 @@ impl ChatWindow {
         self.state = ChatState::Idle;
         if let Some(ref tid) = self.thread_id {
             cx.update_global(|app: &mut AppStore, _| {
-                app.streaming_thread_ids.remove(tid);
+                app.set_thread_streaming(tid.clone(), false);
             });
         }
 
@@ -752,7 +752,7 @@ impl ChatWindow {
                 self.thread_id = Some(tid.clone());
             }
             cx.update_global(|app: &mut AppStore, _| {
-                app.streaming_thread_ids.insert(tid.clone());
+                app.set_thread_streaming(tid.clone(), true);
             });
         }
 

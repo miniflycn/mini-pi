@@ -518,8 +518,7 @@ impl ListDelegate for ThreadListDelegate {
         let thread = self.thread_at(ix)?;
         let is_streaming = cx
             .global::<AppStore>()
-            .streaming_thread_ids
-            .contains(&thread.id);
+            .is_thread_streaming(&thread.id);
         let has_new_activity = thread
             .metadata
             .as_ref()

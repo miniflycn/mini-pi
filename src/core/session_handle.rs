@@ -582,7 +582,7 @@ impl SessionHandle {
 
         if let Some(ref tid) = self.thread_id {
             cx.update_global(|app: &mut AppStore, _| {
-                app.streaming_thread_ids.remove(tid);
+                app.set_thread_streaming(tid.clone(), false);
             });
         }
 
@@ -694,11 +694,7 @@ impl SessionHandle {
                             };
                             if let Some(tid) = thread_id {
                                 let _ = cx.update_global(|app: &mut AppStore, _cx| {
-                                    if is_streaming {
-                                        app.streaming_thread_ids.insert(tid);
-                                    } else {
-                                        app.streaming_thread_ids.remove(&tid);
-                                    }
+                                    app.set_thread_streaming(tid, is_streaming);
                                 });
                             }
                             if new_activity {
