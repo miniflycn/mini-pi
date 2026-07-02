@@ -77,6 +77,10 @@ impl AppStore {
     pub fn is_thread_streaming(&self, thread_id: &str) -> bool {
         self.streaming_thread_ids.contains(thread_id)
     }
+
+    pub fn is_thread_window_open(&self, thread_id: &str) -> bool {
+        self.thread_windows.contains_key(thread_id)
+    }
 }
 
 impl Global for AppStore {}

@@ -95,8 +95,18 @@ impl RenderOnce for WorkspaceFilterPopover {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let on_select = self.on_select.clone();
 
-        let workspace_rows: Vec<_> = self
-            .workspaces
+        let mut workspaces = self.workspaces;
+        workspaces.sort_by(|a, b| {
+            if a.name == "Default" {
+                std::cmp::Ordering::Less
+            } else if b.name == "Default" {
+                std::cmp::Ordering::Greater
+            } else {
+                a.name.cmp(&b.name)
+            }
+        });
+
+        let workspace_rows: Vec<_> = workspaces
             .into_iter()
             .map(|ws| {
                 let ws_id = ws.id.clone();

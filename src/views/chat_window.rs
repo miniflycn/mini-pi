@@ -393,9 +393,9 @@ impl ChatWindow {
     fn sort_workspaces(workspaces: &mut Vec<WorkspaceMeta>) {
         workspaces.sort_by(|a, b| {
             if a.name == "Default" {
-                std::cmp::Ordering::Greater
-            } else if b.name == "Default" {
                 std::cmp::Ordering::Less
+            } else if b.name == "Default" {
+                std::cmp::Ordering::Greater
             } else {
                 a.name.cmp(&b.name)
             }

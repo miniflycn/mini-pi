@@ -693,12 +693,15 @@ impl SessionHandle {
                                 Err(_) => break,
                             };
                             if let Some(tid) = thread_id {
-                                let _ = cx.update_global(|app: &mut AppStore, _cx| {
-                                    app.set_thread_streaming(tid, is_streaming);
+                                let has_open_window = cx.update_global(|app: &mut AppStore, _cx| {
+                                    app.set_thread_streaming(tid.clone(), is_streaming);
+                                    app.is_thread_window_open(&tid)
                                 });
-                            }
-                            if new_activity {
-                                let _ = cx.update_global(|_: &mut AppStore, _cx| {});
+                                if new_activity && !has_open_window {
+                                    let _ = weak.update(cx, |session, _cx| {
+                                        session.mark_has_new_activity();
+                                    });
+                                }
                             }
                         }
                     }
@@ -743,6 +746,10 @@ impl SessionHandle {
     pub fn clear_new_activity(&mut self, cx: &mut Context<Self>) {
         self.set_has_new_activity_db(false);
         cx.emit(SessionEvent::Changed);
+    }
+
+    pub fn mark_has_new_activity(&self) {
+        self.set_has_new_activity_db(true);
     }
 
     fn handle_bridge_event(&mut self, event: BridgeEvent, cx: &mut Context<Self>) -> (bool, bool) {
@@ -1278,9 +1285,6 @@ impl SessionHandle {
         let is_streaming = self.is_streaming();
         let streaming_changed = was_streaming != is_streaming;
         let new_activity = was_streaming && !is_streaming;
-        if new_activity {
-            self.set_has_new_activity_db(true);
-        }
         cx.emit(SessionEvent::Changed);
         (streaming_changed, new_activity)
     }
