@@ -13,9 +13,11 @@
 - [x] Display session stats in the status bar
 - [x] Add a button to scroll to the bottom when user just scrolled
 - [x] Thread title can be changed by clicking on it
+- [ ] Bundle bun instead of js and runtime bundle
+- [ ] Use a curated list of pi extensions
+- [ ] Support cloudflare bearer token settings for tunnel
 - [ ] Message display optimization, virtualize it
 - [ ] Steering, follow up and message queue
-- [ ] Support bearer token settings for tunnel
 - [ ] Auto update and release channel
 - [ ] Pet window
 - [ ] Extensive support for UI protocol
