@@ -18,6 +18,15 @@ use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync::{SyncMeta, SyncStatus};
 use gpui_component::theme::Theme;
 
+/// Which overlay, if any, is currently shown in the main window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MainOverlay {
+    #[default]
+    None,
+    UserPanel,
+    MiniApp,
+}
+
 pub struct AppStore {
     pub store: Arc<Store>,
     pub config: AppConfig,
@@ -28,7 +37,7 @@ pub struct AppStore {
     pub session: Option<SupabaseSession>,
     pub sync_meta: SyncMeta,
     pub sync_status: SyncStatus,
-    pub user_panel_active: bool,
+    pub main_overlay: MainOverlay,
     pub pi_bridge: Option<Arc<PiBridge>>,
     pub session_manager: SessionManager,
     streaming_thread_ids: HashSet<String>,
@@ -57,7 +66,7 @@ impl AppStore {
             session,
             sync_meta,
             sync_status: SyncStatus::Idle,
-            user_panel_active: false,
+            main_overlay: MainOverlay::None,
             pi_bridge,
             session_manager: SessionManager::new(),
             streaming_thread_ids: HashSet::new(),

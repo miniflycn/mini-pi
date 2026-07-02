@@ -16,7 +16,7 @@ use crate::core::actions::{
     About, OpenInstallExtensionWindow, OpenPiSettingsWindow, Quit, SelectFontLarge,
     SelectFontMedium, SelectFontSmall, ShowMainWindow,
 };
-use crate::core::app::AppStore;
+use crate::core::app::{AppStore, MainOverlay};
 use crate::core::app::apply_font_size;
 use crate::core::assets::Assets;
 
@@ -26,7 +26,7 @@ use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync;
 use crate::views::about::open_about_window;
 use crate::views::install_extension::open_install_extension_window;
-use crate::views::mini_app::MiniApp;
+use crate::views::mini_app::{MiniApp, MiniAppEvent};
 use crate::views::pi_settings::open_pi_settings_window;
 use crate::views::skills_panel::SkillsPanel;
 use crate::views::thread_list::ThreadList;
@@ -317,14 +317,12 @@ enum MiniPiTab {
     #[default]
     Threads,
     Skills,
-    MiniApp,
 }
 
 impl MiniPiTab {
     fn from_index(index: usize) -> Self {
         match index {
             1 => MiniPiTab::Skills,
-            2 => MiniPiTab::MiniApp,
             _ => MiniPiTab::Threads,
         }
     }
@@ -338,6 +336,7 @@ struct MiniPiApp {
     active_tab_index: usize,
     pinned: bool,
     _user_panel_subscription: gpui::Subscription,
+    _mini_app_subscription: gpui::Subscription,
 }
 
 impl MiniPiApp {
@@ -384,8 +383,20 @@ impl MiniPiApp {
                 if reset_panel {
                     this.active_tab_index = 0;
                     cx.update_global(|app: &mut AppStore, _| {
-                        app.user_panel_active = false;
+                        app.main_overlay = MainOverlay::None;
                     });
+                }
+                cx.notify();
+            });
+
+        let _mini_app_subscription =
+            cx.subscribe(&mini_app, move |_this, _, event: &MiniAppEvent, cx| {
+                match event {
+                    MiniAppEvent::BackPressed => {
+                        cx.update_global(|app: &mut AppStore, _| {
+                            app.main_overlay = MainOverlay::None;
+                        });
+                    }
                 }
                 cx.notify();
             });
@@ -398,6 +409,7 @@ impl MiniPiApp {
             active_tab_index: 0,
             pinned: false,
             _user_panel_subscription,
+            _mini_app_subscription,
         }
     }
 }
@@ -409,7 +421,7 @@ impl gpui::Render for MiniPiApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
         let active_tab_index = self.active_tab_index;
-        let user_panel_active = cx.global::<AppStore>().user_panel_active;
+        let main_overlay = cx.global::<AppStore>().main_overlay;
 
         let dialog_layer = Root::render_dialog_layer(window, cx);
         let notification_layer = Root::render_notification_layer(window, cx);
@@ -446,6 +458,7 @@ impl gpui::Render for MiniPiApp {
                             .gap_2()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .child(self.pin_button(cx))
+                            .child(Self::mini_app_button(cx))
                             .child(Self::user_menu_button(cx)),
                     ),
             )
@@ -457,14 +470,13 @@ impl gpui::Render for MiniPiApp {
                     .flex_1()
                     .overflow_hidden()
                     .map(|this| {
-                        if user_panel_active {
-                            this.child(self.user_panel.clone())
-                        } else {
-                            match MiniPiTab::from_index(active_tab_index) {
+                        match main_overlay {
+                            MainOverlay::UserPanel => this.child(self.user_panel.clone()),
+                            MainOverlay::MiniApp => this.child(self.mini_app.clone()),
+                            MainOverlay::None => match MiniPiTab::from_index(active_tab_index) {
                                 MiniPiTab::Threads => this.child(self.thread_list.clone()),
                                 MiniPiTab::Skills => this.child(self.skills_panel.clone()),
-                                MiniPiTab::MiniApp => this.child(self.mini_app.clone()),
-                            }
+                            },
                         }
                     }),
             )
@@ -500,18 +512,53 @@ impl MiniPiApp {
             }))
     }
 
+    fn mini_app_button(cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        let active = cx.global::<AppStore>().main_overlay == MainOverlay::MiniApp;
+        Button::new("mini-app")
+            .with_size(gpui_component::Size::Small)
+            .ghost()
+            .icon(
+                Icon::empty()
+                    .path("icons/layout-grid.svg")
+                    .text_color(if active {
+                        gpui::rgb(0x4f46e5)
+                    } else {
+                        gpui::rgb(0x888888)
+                    }),
+            )
+            .on_click(cx.listener(|_this, _, _, cx| {
+                cx.update_global(|app: &mut AppStore, _| {
+                    app.main_overlay = if app.main_overlay == MainOverlay::MiniApp {
+                        MainOverlay::None
+                    } else {
+                        MainOverlay::MiniApp
+                    };
+                });
+                cx.notify();
+            }))
+    }
+
     fn user_menu_button(cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        let active = cx.global::<AppStore>().main_overlay == MainOverlay::UserPanel;
         Button::new("user-menu")
             .with_size(gpui_component::Size::Small)
             .ghost()
             .icon(
                 Icon::empty()
                     .path("icons/account.svg")
-                    .text_color(gpui::rgb(0x888888)),
+                    .text_color(if active {
+                        gpui::rgb(0x4f46e5)
+                    } else {
+                        gpui::rgb(0x888888)
+                    }),
             )
             .on_click(cx.listener(|_this, _, _, cx| {
                 cx.update_global(|app: &mut AppStore, _| {
-                    app.user_panel_active = !app.user_panel_active;
+                    app.main_overlay = if app.main_overlay == MainOverlay::UserPanel {
+                        MainOverlay::None
+                    } else {
+                        MainOverlay::UserPanel
+                    };
                 });
                 cx.notify();
             }))
@@ -520,7 +567,7 @@ impl MiniPiApp {
     fn set_active_tab(&mut self, index: usize, _window: &mut Window, cx: &mut gpui::Context<Self>) {
         self.active_tab_index = index;
         cx.update_global(|app: &mut AppStore, _| {
-            app.user_panel_active = false;
+            app.main_overlay = MainOverlay::None;
         });
         if let MiniPiTab::Skills = MiniPiTab::from_index(index) {
             self.skills_panel.update(cx, |panel, cx| {

@@ -55,7 +55,7 @@ impl RenderOnce for ThreadListItem {
             thread,
             store,
             list_state,
-            selected,
+            selected: _,
             hovered,
             confirming,
             is_streaming,
@@ -123,7 +123,7 @@ impl RenderOnce for ThreadListItem {
 
         div()
             .id(ElementId::from(SharedString::from(format!(
-                "thread-item-{}",
+                "thread-item-{}",   
                 thread_id
             ))))
             .px_3()
