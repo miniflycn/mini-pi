@@ -1791,7 +1791,7 @@ fn parse_at_mention(content: &str, cursor: usize) -> Option<AtMentionParse> {
     }
 
     let after_at = &text_before_cursor[at_pos + 1..];
-    if after_at.starts_with(' ') {
+    if after_at.starts_with(' ') || after_at.contains(char::is_whitespace) {
         return None;
     }
 
@@ -1861,7 +1861,7 @@ fn parse_slash_command(content: &str, cursor: usize) -> Option<AtMentionParse> {
     }
 
     let after_slash = &text_before_cursor[slash_pos + 1..];
-    if after_slash.starts_with(' ') {
+    if after_slash.starts_with(' ') || after_slash.contains(char::is_whitespace) {
         return None;
     }
 
