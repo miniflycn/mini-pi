@@ -85,14 +85,20 @@ impl AuthDialogView {
 
         window.open_dialog(cx, move |dialog, _, _| {
             let view_for_content = view.clone();
+            let view_for_ok = view.clone();
             let subtitle_for_content = subtitle.clone();
             dialog
-                .title(title)
                 .overlay(true)
                 .overlay_closable(true)
                 .close_button(true)
                 .keyboard(true)
                 .w(px(400.))
+                .on_ok(move |_, window, cx| {
+                    view_for_ok.update(cx, |view, _cx| {
+                        view.submit(window, _cx);
+                    });
+                    false
+                })
                 .content(move |content, window, cx| {
                     view_for_content.update(cx, |view, cx| {
                         content.child(view.render_dialog_content(window, cx, title, subtitle_for_content.clone()))
@@ -212,6 +218,9 @@ impl AuthDialogView {
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(cx.global::<AppStore>().auth, AuthState::LoggingIn) {
+            return;
+        }
         match self.mode {
             AuthDialogMode::Login => self.login(window, cx),
             AuthDialogMode::Signup => self.signup(window, cx),

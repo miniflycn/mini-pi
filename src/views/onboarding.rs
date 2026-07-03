@@ -347,7 +347,7 @@ impl OnboardingPanel {
                     .gap_2()
                     .child(
                         Button::new("onboarding-save-btn")
-                            .label(if self.saving { "Saving..." } else { "Save & Start" })
+                            .label(if self.saving { "Saving..." } else { "Save" })
                             .primary()
                             .with_size(Size::Small)
                             .flex_1()
@@ -358,7 +358,7 @@ impl OnboardingPanel {
                     )
                     .child(
                         Button::new("onboarding-skip-btn")
-                            .label("Skip for now")
+                            .label("Close")
                             .with_size(Size::Small)
                             .flex_1()
                             .disabled(self.saving)

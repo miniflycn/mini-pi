@@ -807,7 +807,8 @@ fn render_auth_content(
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child("PI SETTINGS"),
                     )
-                    .child(render_pi_settings_row(cx)),
+                    .child(render_pi_settings_row(cx))
+                    .child(render_onboarding_row(cx)),
             )
             .child(
                 div()
@@ -899,7 +900,7 @@ fn render_onboarding_row(cx: &mut Context<UserPanel>) -> impl IntoElement {
                 .justify_center()
                 .child(
                     gpui::svg()
-                        .path("icons/folder.svg")
+                        .path("icons/circle-check.svg")
                         .size(px(18.))
                         .text_color(cx.theme().muted_foreground),
                 ),
