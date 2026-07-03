@@ -13,9 +13,9 @@
 - [x] Display session stats in the status bar
 - [x] Add a button to scroll to the bottom when user just scrolled
 - [x] Thread title can be changed by clicking on it
+- [x] Support cloudflare bearer token settings for tunnel
 - [ ] Bundle bun instead of js and runtime bundle
 - [ ] Use a curated list of pi extensions
-- [ ] Support cloudflare bearer token settings for tunnel
 - [ ] Message display optimization, virtualize it
 - [ ] Steering, follow up and message queue
 - [ ] Auto update and release channel
@@ -32,3 +32,4 @@
 - [x] Accidentally closed main windows and cannot reopen
 - [ ] Cannot be stopped when stuck and why stuck sometimes
 - [ ] Only one thread can be running at a time
+- [ ] Cloudflared download could be interrupted making the enable button unresponsable

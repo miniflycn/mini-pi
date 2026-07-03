@@ -305,7 +305,6 @@ fn render_cloudflared_dialog(
                             div().flex_1().child(
                                 Button::new("cloudflared-download-btn")
                                     .label(primary_label)
-                                    .with_size(Size::Small)
                                     .primary()
                                     .disabled(is_downloading)
                                     .w_full()
@@ -318,7 +317,6 @@ fn render_cloudflared_dialog(
                             div().flex_1().child(
                                 Button::new("cloudflared-cancel-btn")
                                     .label("Cancel")
-                                    .with_size(Size::Large)
                                     .w_full()
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.cloudflared_dialog = None;
