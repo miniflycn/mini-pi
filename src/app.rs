@@ -13,8 +13,8 @@ use crate::auth::state::{self, AuthState};
 use crate::config::app_config::{AppConfig, DEFAULT_DARK_THEME, FontSizePreset};
 use crate::config::model_config;
 use crate::core::actions::{
-    About, OpenInstallExtensionWindow, OpenPiSettingsWindow, Quit, SelectFontLarge,
-    SelectFontMedium, SelectFontSmall, ShowMainWindow,
+    About, Login, OpenInstallExtensionWindow, OpenPiSettingsWindow, Quit, SelectFontLarge,
+    SelectFontMedium, SelectFontSmall, ShowMainWindow, SignUp,
 };
 use crate::core::app::{AppStore, MainOverlay};
 use crate::core::app::apply_font_size;
@@ -25,6 +25,7 @@ use crate::remote::RemoteController;
 use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync;
 use crate::views::about::open_about_window;
+use crate::views::auth_dialog::{AuthDialogMode, AuthDialogView};
 use crate::views::install_extension::open_install_extension_window;
 use crate::views::mini_app::{MiniApp, MiniAppEvent};
 use crate::views::pi_settings::open_pi_settings_window;
@@ -182,6 +183,20 @@ pub fn run() {
             });
             cx.on_action(|_: &OpenPiSettingsWindow, cx: &mut App| {
                 open_pi_settings_window(cx);
+            });
+            cx.on_action(|_: &Login, cx: &mut App| {
+                if let Some(window) = cx.active_window() {
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        AuthDialogView::open(window, cx, AuthDialogMode::Login);
+                    });
+                }
+            });
+            cx.on_action(|_: &SignUp, cx: &mut App| {
+                if let Some(window) = cx.active_window() {
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        AuthDialogView::open(window, cx, AuthDialogMode::Signup);
+                    });
+                }
             });
             cx.on_action(|_: &SelectFontSmall, cx: &mut App| {
                 apply_font_size(FontSizePreset::Small, cx);

@@ -7,6 +7,7 @@ use gpui::{
 use crate::auth::state::{self, AuthState};
 use crate::auth::supabase;
 use crate::config::app_config::{DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, FontSizePreset};
+use crate::views::auth_dialog::{AuthDialogMode, AuthDialogView};
 use crate::core::actions::{About, OpenPiSettingsWindow};
 use crate::core::app::{AppStore, apply_font_size};
 use crate::remote::RemoteStatus;
@@ -15,7 +16,6 @@ use crate::remote::controller::TunnelLog;
 use crate::remote::qr::qr_image_source;
 use crate::sync::settings_sync;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::scroll::Scrollbar;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
@@ -30,12 +30,6 @@ pub enum UserPanelEvent {
     BackPressed,
     AuthStateChanged,
     OpenOnboarding,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum AuthDialog {
-    Login,
-    Signup,
 }
 
 #[derive(Clone)]
@@ -67,16 +61,8 @@ impl Render for StatusLogTooltip {
 }
 
 pub struct UserPanel {
-    pub email_input: gpui::Entity<InputState>,
-    pub password_input: gpui::Entity<InputState>,
-    pub confirm_password_input: gpui::Entity<InputState>,
-    pub auth_error: Option<String>,
-    pub auth_dialog: Option<AuthDialog>,
     pub cloudflared_dialog: Option<CloudflaredDialog>,
     pub font_size_dropdown: gpui::Entity<SelectState<SearchableVec<FontSizePreset>>>,
-    pub _email_sub: gpui::Subscription,
-    pub _password_sub: gpui::Subscription,
-    pub _confirm_password_sub: gpui::Subscription,
     pub _remote_sub: Option<gpui::Subscription>,
     pub _font_size_dropdown_sub: gpui::Subscription,
     pub scroll_handle: ScrollHandle,
@@ -101,28 +87,6 @@ impl SelectItem for FontSizePreset {
 
 impl UserPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let email_input = cx.new(|cx| InputState::new(window, cx).placeholder("Email"));
-        let password_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Password")
-                .masked(true)
-        });
-        let confirm_password_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Confirm Password")
-                .masked(true)
-        });
-
-        let _email_sub = cx.observe(&email_input, |_, _, cx| {
-            cx.notify();
-        });
-        let _password_sub = cx.observe(&password_input, |_, _, cx| {
-            cx.notify();
-        });
-        let _confirm_password_sub = cx.observe(&confirm_password_input, |_, _, cx| {
-            cx.notify();
-        });
-
         let remote_controller = cx.global::<AppStore>().remote_controller.clone();
         let remote_sub = remote_controller.as_ref().map(|controller| {
             cx.observe(controller, |_this, _controller, cx| {
@@ -152,16 +116,8 @@ impl UserPanel {
         );
 
         Self {
-            email_input,
-            password_input,
-            confirm_password_input,
-            auth_error: None,
-            auth_dialog: None,
             cloudflared_dialog: None,
             font_size_dropdown,
-            _email_sub,
-            _password_sub,
-            _confirm_password_sub,
             _remote_sub: remote_sub,
             _font_size_dropdown_sub,
             scroll_handle: ScrollHandle::new(),
@@ -205,14 +161,6 @@ impl EventEmitter<UserPanelEvent> for UserPanel {}
 impl Render for UserPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let auth = cx.global::<AppStore>().auth.clone();
-        if auth.is_logged_in() && self.auth_dialog.is_some() {
-            self.auth_dialog = None;
-        }
-
-        let email_val = self.email_input.read(cx).value();
-        let password_val = self.password_input.read(cx).value();
-        let is_logging_in = matches!(auth, AuthState::LoggingIn);
-        let error_msg: Option<SharedString> = self.auth_error.clone().map(|s| s.into());
 
         let header = div()
             .id("user-panel-header")
@@ -243,201 +191,26 @@ impl Render for UserPanel {
             )
             .child(render_auth_content(self, &auth, window, cx));
 
-        if let Some(dialog) = self.auth_dialog {
-            let confirm_password_val = self.confirm_password_input.read(cx).value();
-
-            let (title, subtitle): (SharedString, SharedString) = match dialog {
-                AuthDialog::Login => (
-                    "Sign In".into(),
-                    "Sign in to sync your agent settings across devices".into(),
-                ),
-                AuthDialog::Signup => (
-                    "Create Account".into(),
-                    "Sign up to sync your agent settings across devices".into(),
-                ),
-            };
-
-            let form_fields = div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .child(render_email_field(self, cx))
-                .child(render_password_field(self, cx))
-                .when(dialog == AuthDialog::Signup, |el: gpui::Div| {
-                    el.child(render_confirm_password_field(self, cx))
-                })
-                .when(error_msg.is_some(), |el: gpui::Div| {
-                    el.child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().danger)
-                            .child(error_msg.unwrap_or_default()),
-                    )
-                })
-                .when(dialog == AuthDialog::Login, |el: gpui::Div| {
-                    el.child(render_login_button(
-                        email_val.clone(),
-                        password_val.clone(),
-                        is_logging_in,
-                        cx,
-                    ))
-                })
-                .when(dialog == AuthDialog::Signup, |el: gpui::Div| {
-                    el.child(render_signup_submit_button(
-                        email_val.clone(),
-                        password_val.clone(),
-                        confirm_password_val.clone(),
-                        is_logging_in,
-                        window,
-                        cx,
-                    ))
-                });
-
-            div()
-                .id("user-panel")
-                .flex()
-                .flex_col()
-                .size_full()
-                .relative()
-                .child(header)
-                .child(content)
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(0.))
-                        .right(px(0.))
-                        .bottom(px(0.))
-                        .w(px(12.))
-                        .child(Scrollbar::vertical(&self.scroll_handle)),
-                )
-                .child(
-                    div()
-                        .id("auth-dialog-overlay")
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full()
-                        .bg(gpui::rgba(0x00000099))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.auth_dialog = None;
-                            this.auth_error = None;
-                            cx.notify();
-                        }))
-                        .child(
-                            div()
-                                .id("auth-dialog-card")
-                                .mx_8()
-                                .w(px(360.))
-                                .flex()
-                                .flex_col()
-                                .gap_4()
-                                .px_6()
-                                .py_6()
-                                .rounded_xl()
-                                .bg(cx.theme().secondary)
-                                .border_1()
-                                .border_color(cx.theme().border)
-                                .on_click(|_, _, cx| {
-                                    cx.stop_propagation();
-                                })
-                                .child(
-                                    div()
-                                        .text_xl()
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(cx.theme().foreground)
-                                        .child(title),
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(subtitle),
-                                )
-                                .child(form_fields)
-                                .child(
-                                    Button::new("auth-dialog-close-btn")
-                                        .label("Cancel")
-                                        .with_size(Size::Large)
-                                        .w_full()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.auth_dialog = None;
-                                            this.auth_error = None;
-                                            cx.notify();
-                                        })),
-                                )
-                                .when(!is_logging_in && dialog == AuthDialog::Login, |el| {
-                                    el.child(
-                                        div()
-                                            .id("switch-to-signup")
-                                            .w_full()
-                                            .flex()
-                                            .flex_row()
-                                            .justify_end()
-                                            .child(
-                                                Button::new("switch-to-signup")
-                                                    .label("Create Account")
-                                                    .with_size(Size::Small)
-                                                    .link()
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.auth_error = None;
-                                                        this.auth_dialog = Some(AuthDialog::Signup);
-                                                        cx.notify();
-                                                    })),
-                                            ),
-                                    )
-                                })
-                                .when(!is_logging_in && dialog == AuthDialog::Signup, |el| {
-                                    el.child(
-                                        div()
-                                            .id("switch-to-login")
-                                            .w_full()
-                                            .flex()
-                                            .flex_row()
-                                            .justify_end()
-                                            .child(
-                                                Button::new("switch-to-login")
-                                                    .label("Sign In")
-                                                    .with_size(Size::Small)
-                                                    .link()
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.auth_error = None;
-                                                        this.auth_dialog = Some(AuthDialog::Login);
-                                                        cx.notify();
-                                                    })),
-                                            ),
-                                    )
-                                }),
-                        ),
-                )
-                .when(self.cloudflared_dialog.is_some(), |this| {
-                    this.child(render_cloudflared_dialog(self, cx))
-                })
-        } else {
-            div()
-                .id("user-panel")
-                .flex()
-                .flex_col()
-                .size_full()
-                .relative()
-                .child(header)
-                .child(content)
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(0.))
-                        .right(px(0.))
-                        .bottom(px(0.))
-                        .w(px(12.))
-                        .child(Scrollbar::vertical(&self.scroll_handle)),
-                )
-                .when(self.cloudflared_dialog.is_some(), |this| {
-                    this.child(render_cloudflared_dialog(self, cx))
-                })
-        }
+        div()
+            .id("user-panel")
+            .flex()
+            .flex_col()
+            .size_full()
+            .relative()
+            .child(header)
+            .child(content)
+            .child(
+                div()
+                    .absolute()
+                    .top(px(0.))
+                    .right(px(0.))
+                    .bottom(px(0.))
+                    .w(px(12.))
+                    .child(Scrollbar::vertical(&self.scroll_handle)),
+            )
+            .when(self.cloudflared_dialog.is_some(), |this| {
+                this.child(render_cloudflared_dialog(self, cx))
+            })
     }
 }
 
@@ -1008,9 +781,8 @@ fn render_auth_content(
                             .size(px(16.))
                             .text_color(rgb(0xffffff)),
                     )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.auth_dialog = Some(AuthDialog::Login);
-                        cx.notify();
+                    .on_click(cx.listener(|_this, _, window, cx| {
+                        AuthDialogView::open(window, &mut *cx, AuthDialogMode::Login);
                     })),
             )
             .child(
@@ -1232,236 +1004,13 @@ fn render_font_size_row(panel: &UserPanel, cx: &mut Context<UserPanel>) -> impl 
         )
 }
 
-fn render_email_field(panel: &UserPanel, cx: &mut Context<UserPanel>) -> impl IntoElement {
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child("EMAIL"),
-        )
-        .child(
-            div()
-                .w_full()
-                .px_3()
-                .py_2()
-                .rounded_lg()
-                .bg(cx.theme().secondary)
-                .border_1()
-                .border_color(cx.theme().border)
-                .child(Input::new(&panel.email_input).appearance(false).w_full()),
-        )
-}
-
-fn render_password_field(panel: &UserPanel, cx: &mut Context<UserPanel>) -> impl IntoElement {
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child("PASSWORD"),
-        )
-        .child(
-            div()
-                .w_full()
-                .px_3()
-                .py_2()
-                .rounded_lg()
-                .bg(cx.theme().secondary)
-                .border_1()
-                .border_color(cx.theme().border)
-                .child(Input::new(&panel.password_input).appearance(false).w_full()),
-        )
-}
-
-fn render_login_button(
-    email_val: SharedString,
-    password_val: SharedString,
-    is_logging_in: bool,
-    cx: &mut Context<UserPanel>,
-) -> impl IntoElement {
-    Button::new("login-button")
-        .label("Sign In")
-        .with_size(Size::Large)
-        .primary()
-        .disabled(is_logging_in)
-        .w_full()
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.auth_error = None;
-            let email = email_val.to_string();
-            let password = password_val.to_string();
-            if email.is_empty() || password.is_empty() {
-                this.auth_error = Some("Email and password are required".to_string());
-                cx.notify();
-                return;
-            }
-            cx.update_global(|app: &mut AppStore, _| {
-                app.auth = AuthState::LoggingIn;
-            });
-            cx.notify();
-            let store = cx.global::<AppStore>().store.clone();
-            cx.spawn(async move |weak, cx| {
-                let result = smol::unblock(move || supabase::login(&email, &password)).await;
-                let _ = weak.update(cx, |this, cx| {
-                    match result {
-                        Ok(session) => {
-                            let _ = state::save_session(&store, &session);
-                            let user = session.user.clone();
-                            cx.update_global(|app: &mut AppStore, _| {
-                                app.auth = AuthState::LoggedIn(user);
-                                app.session = Some(session);
-                            });
-                            cx.emit(UserPanelEvent::AuthStateChanged);
-                        }
-                        Err(e) => {
-                            this.auth_error = Some(e.to_string());
-                            cx.update_global(|app: &mut AppStore, _| {
-                                app.auth = AuthState::LoggedOut;
-                            });
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
-        }))
-}
-
-fn render_confirm_password_field(
-    panel: &UserPanel,
-    cx: &mut Context<UserPanel>,
-) -> impl IntoElement {
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child("CONFIRM PASSWORD"),
-        )
-        .child(
-            div()
-                .w_full()
-                .px_3()
-                .py_2()
-                .rounded_lg()
-                .bg(cx.theme().secondary)
-                .border_1()
-                .border_color(cx.theme().border)
-                .child(
-                    Input::new(&panel.confirm_password_input)
-                        .appearance(false)
-                        .w_full(),
-                ),
-        )
-}
-
-fn render_signup_submit_button(
-    email_val: SharedString,
-    password_val: SharedString,
-    confirm_password_val: SharedString,
-    is_logging_in: bool,
-    window: &mut Window,
-    cx: &mut Context<UserPanel>,
-) -> impl IntoElement {
-    let window_handle = window.window_handle();
-    Button::new("signup-submit-button")
-        .label("Create Account")
-        .with_size(Size::Large)
-        .primary()
-        .loading(is_logging_in)
-        .disabled(is_logging_in)
-        .w_full()
-        .on_click(cx.listener(move |this, _, _window, cx| {
-            this.auth_error = None;
-            let email = email_val.to_string();
-            let password = password_val.to_string();
-            let confirm = confirm_password_val.to_string();
-            if email.is_empty() || password.is_empty() {
-                this.auth_error = Some("Email and password are required".to_string());
-                cx.notify();
-                return;
-            }
-            if password != confirm {
-                this.auth_error = Some("Passwords do not match".to_string());
-                cx.notify();
-                return;
-            }
-            cx.update_global(|app: &mut AppStore, _| {
-                app.auth = AuthState::LoggingIn;
-            });
-            cx.notify();
-            let store = cx.global::<AppStore>().store.clone();
-            cx.spawn(async move |weak, cx| {
-                let result = smol::unblock(move || supabase::signup(&email, &password)).await;
-                let _ = weak.update(cx, |this, cx| {
-                    match result {
-                        Ok(session) => {
-                            let _ = state::save_session(&store, &session);
-                            let user = session.user.clone();
-                            cx.update_global(|app: &mut AppStore, _| {
-                                app.auth = AuthState::LoggedIn(user);
-                                app.session = Some(session);
-                            });
-                            cx.emit(UserPanelEvent::AuthStateChanged);
-                        }
-                        Err(e) => {
-                            const CONFIRM_MSG: &str =
-                                "Please check your email to confirm your account, then sign in.";
-                            if let supabase::SupabaseAuthError::Api { msg, status: 200 } = &e {
-                                if msg.as_str() == CONFIRM_MSG {
-                                    this.auth_error = None;
-                                    this.auth_dialog = Some(AuthDialog::Login);
-                                    let _ = window_handle.update(cx, |_, window, cx| {
-                                        window.push_notification(
-                                            Notification::success(
-                                                "Confirmation email sent. Please sign in.",
-                                            ),
-                                            cx,
-                                        );
-                                    });
-                                    cx.update_global(|app: &mut AppStore, _| {
-                                        app.auth = AuthState::LoggedOut;
-                                    });
-                                    cx.notify();
-                                    return;
-                                }
-                            }
-                            this.auth_error = Some(e.to_string());
-                            cx.update_global(|app: &mut AppStore, _| {
-                                app.auth = AuthState::LoggedOut;
-                            });
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
-        }))
-}
-
 fn render_logout_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
     Button::new("logout-button")
         .label("Sign Out")
         .danger()
         .w_full()
         .py_5()
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.auth_error = None;
+        .on_click(cx.listener(|_this, _, _, cx| {
             let session = cx.global::<AppStore>().session.clone();
             let store = cx.global::<AppStore>().store.clone();
             if let Some(s) = session {
