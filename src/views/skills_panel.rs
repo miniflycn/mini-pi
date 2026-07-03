@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use gpui::{
     Action, Context, IntoElement, Render, ScrollHandle, SharedString, Window, div, prelude::*, px,
 };
@@ -6,7 +8,6 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::Scrollbar;
 use gpui_component::{Icon, Sizable as _, Size};
 
-use crate::auth::state::agent_dir;
 use crate::core::actions::OpenInstallExtensionWindow;
 use crate::core::app::AppStore;
 use crate::rpc::pi_rpc::{BridgeExtension, BridgePrompt, BridgeSkill};
@@ -179,9 +180,14 @@ impl Render for SkillsPanel {
                     self.extensions
                         .iter()
                         .map(|e| {
+                            let basename = Path::new(&e.name)
+                                .file_name()
+                                .and_then(|f| f.to_str())
+                                .unwrap_or(&e.name)
+                                .to_string();
                             (
-                                SharedString::from(e.name.clone()),
-                                e.description.clone().map(SharedString::from),
+                                SharedString::from(basename),
+                                Some(SharedString::from(e.name.clone())),
                                 e.raw
                                     .get("resolvedPath")
                                     .and_then(|v| v.as_str())
@@ -276,19 +282,13 @@ fn render_section(
                 .child(format!("No {} loaded.", title.to_lowercase())),
         );
     } else {
-        let agent_dir_str = agent_dir().to_string_lossy().trim_end_matches('/').to_string();
-
         for (name, description, path) in items {
-            let display_name: SharedString = match &path {
-                Some(p) if p.starts_with(&agent_dir_str) => {
-                    let rel = &p[agent_dir_str.len()..];
-                    SharedString::from(rel.trim_start_matches('/').to_string())
-                }
-                _ => name.clone(),
-            };
-
+            let display_name = name.clone();
             let mut card = div()
-                .id(SharedString::from(format!("resource-item-{}", display_name)))
+                .id(SharedString::from(format!(
+                    "resource-item-{}",
+                    display_name
+                )))
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -343,7 +343,6 @@ fn render_section(
                     );
                 }
             }
-
 
             section = section.child(card);
         }
