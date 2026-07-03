@@ -5,7 +5,7 @@ use std::{
 
 use gpui::{
     AnyWindowHandle, BorrowAppContext, Bounds, Entity, Global, TitlebarOptions,
-    WindowBackgroundAppearance, WindowBounds, WindowOptions, point, px,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions, point, px, size,
 };
 
 use crate::auth::state::{AuthState, SupabaseSession};
@@ -97,6 +97,7 @@ impl Global for AppStore {}
 pub fn custom_window_options(bounds: Option<Bounds<gpui::Pixels>>) -> WindowOptions {
     WindowOptions {
         window_bounds: bounds.map(WindowBounds::Windowed),
+        window_min_size: Some(size(px(300.0), px(300.0))),
         titlebar: Some(TitlebarOptions {
             title: None,
             appears_transparent: true,

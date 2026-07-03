@@ -92,7 +92,7 @@ impl AuthDialogView {
                 .overlay_closable(true)
                 .close_button(true)
                 .keyboard(true)
-                .w(px(400.))
+                .w(px(360.))
                 .on_ok(move |_, window, cx| {
                     view_for_ok.update(cx, |view, _cx| {
                         view.submit(window, _cx);
@@ -101,7 +101,12 @@ impl AuthDialogView {
                 })
                 .content(move |content, window, cx| {
                     view_for_content.update(cx, |view, cx| {
-                        content.child(view.render_dialog_content(window, cx, title, subtitle_for_content.clone()))
+                        content.child(view.render_dialog_content(
+                            window,
+                            cx,
+                            title,
+                            subtitle_for_content.clone(),
+                        ))
                     })
                 })
         });
@@ -130,12 +135,7 @@ impl AuthDialogView {
                 el.child(render_confirm_password_field(self, cx))
             })
             .when_some(error_msg, |this, err| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().danger)
-                        .child(err),
-                )
+                this.child(div().text_xs().text_color(cx.theme().danger).child(err))
             })
             .when(mode == AuthDialogMode::Login, |el: gpui::Div| {
                 el.child(render_login_button(is_logging_in, cx))
@@ -456,10 +456,7 @@ fn render_confirm_password_field(
         )
 }
 
-fn render_login_button(
-    is_logging_in: bool,
-    cx: &mut Context<AuthDialogView>,
-) -> impl IntoElement {
+fn render_login_button(is_logging_in: bool, cx: &mut Context<AuthDialogView>) -> impl IntoElement {
     Button::new("login-button")
         .label("Sign In")
         .with_size(Size::Large)
@@ -471,10 +468,7 @@ fn render_login_button(
         }))
 }
 
-fn render_signup_button(
-    is_logging_in: bool,
-    cx: &mut Context<AuthDialogView>,
-) -> impl IntoElement {
+fn render_signup_button(is_logging_in: bool, cx: &mut Context<AuthDialogView>) -> impl IntoElement {
     Button::new("signup-submit-button")
         .label("Create Account")
         .with_size(Size::Large)

@@ -1,4 +1,4 @@
-use gpui::{Context, EventEmitter, FontWeight, IntoElement, Render, Window, WindowOptions, div, prelude::*, px, rgb};
+use gpui::{Context, EventEmitter, FontWeight, IntoElement, Render, Window, WindowOptions, div, prelude::*, px, rgb, size};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::{ActiveTheme, Icon, Root, Sizable as _, Size, TitleBar};
 use gpui_wry::WebView;
@@ -191,6 +191,7 @@ async fn open_mini_app_webview(
     url: &str,
 ) {
     let window_options = WindowOptions {
+        window_min_size: Some(size(px(300.0), px(300.0))),
         titlebar: Some(TitleBar::title_bar_options()),
         window_decorations: if cfg!(target_os = "macos") {
             None

@@ -268,6 +268,7 @@ fn open_main_window(cx: &mut App) {
     let bounds = Bounds::centered(None, size(px(420.0), px(600.0)), cx);
     let window_options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_min_size: Some(size(px(300.0), px(300.0))),
         titlebar: Some(TitleBar::title_bar_options()),
         window_decorations: if cfg!(target_os = "macos") {
             None

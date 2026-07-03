@@ -6,6 +6,7 @@ pub fn open_about_window(cx: &mut App) {
     let bounds = gpui::Bounds::centered(None, gpui::size(gpui::px(360.0), gpui::px(220.0)), cx);
     let window_options = gpui::WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
+        window_min_size: Some(gpui::size(gpui::px(300.0), gpui::px(300.0))),
         titlebar: Some(gpui_component::TitleBar::title_bar_options()),
         window_decorations: if cfg!(target_os = "macos") {
             None
