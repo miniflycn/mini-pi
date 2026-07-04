@@ -575,6 +575,15 @@ impl PiBridge {
 
     /// Query the bridge for the effective slash-command list.
     ///
+    /// This sends a global `get_commands` request with a synthetic routing id.
+    /// The bridge uses a real session's loader when the id matches a live
+    /// session, otherwise it falls back to `DefaultResourceLoader` so the
+    /// command list is available before any chat session exists.
+    ///
+    /// The synthetic id uses a `__commands__` prefix that is reserved for this
+    /// internal routing path. Real session ids come from session file names and
+    /// should never collide with this prefix.
+    ///
     /// Returns the full response `data` object (which contains a `commands`
     /// array) so callers can parse it consistently with the per-session
     /// `get_commands` response.
@@ -594,7 +603,7 @@ impl PiBridge {
         let req = serde_json::json!({
             "type": "get_commands",
             "sessionId": session_id,
-            "id": request_id,
+            "id": &request_id,
         });
         if let Err(e) = self.send_json(&req) {
             return Err(e);
@@ -607,10 +616,13 @@ impl PiBridge {
                     success,
                     data,
                     error,
+                    request_id: resp_request_id,
                     ..
                 } = event
                 {
-                    if command == "get_commands" {
+                    if command == "get_commands"
+                        && resp_request_id.as_deref() == Some(request_id.as_str())
+                    {
                         if success {
                             return Ok(
                                 data.unwrap_or(serde_json::Value::Object(serde_json::Map::new()))

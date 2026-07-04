@@ -20,6 +20,7 @@ import type {
 import { sendError, sendResponse } from "./messages.js";
 import { SessionStore } from "./session.js";
 import {
+  handleGetCommands,
   handleGetModel,
   handleGetModels,
   handleGetProviders,
@@ -252,6 +253,23 @@ export class BridgeServer {
             logger: this.#logger,
           },
           state,
+        );
+        return;
+      }
+
+      if (type === "get_commands") {
+        await handleGetCommands(
+          {
+            ws,
+            sessionId,
+            msg,
+            modelRegistry: this.#modelRegistry,
+            authStorage: this.#authStorage,
+            settingsManager: this.#settingsManager,
+            logger: this.#logger,
+          },
+          this.#store,
+          this.#config.agentDir,
         );
         return;
       }

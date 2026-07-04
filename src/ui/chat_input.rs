@@ -427,6 +427,7 @@ impl ChatInput {
     pub fn set_commands(&mut self, commands: Vec<CommandItem>, cx: &mut Context<Self>) {
         self.available_commands = commands;
         self.update_popups(cx);
+        cx.notify();
     }
 
     pub fn update_popups(&mut self, _cx: &mut Context<Self>) {
@@ -1476,19 +1477,8 @@ impl ChatInput {
             .child(if is_streaming {
                 Button::new("stop-btn")
                     .with_size(Size::Small)
-                    .custom(
-                        ButtonCustomVariant::new(cx)
-                            .color(cx.theme().danger.into())
-                            .foreground(cx.theme().danger_foreground.into())
-                            .hover(cx.theme().danger_hover.into())
-                            .active(cx.theme().danger_active.into()),
-                    )
-                    .icon(
-                        Icon::empty()
-                            .path("icons/stop.svg")
-                            .size(px(14.))
-                            .text_color(cx.theme().danger_foreground),
-                    )
+                    .danger()
+                    .icon(Icon::empty().path("icons/stop.svg").size(px(14.)))
                     .on_click(cx.listener(|_, _, _window, cx| {
                         cx.emit(ChatInputEvent::Stop);
                     }))
@@ -1497,12 +1487,7 @@ impl ChatInput {
                 Button::new("send-btn")
                     .with_size(Size::Small)
                     .primary()
-                    .icon(
-                        Icon::empty()
-                            .path("icons/send.svg")
-                            .size(px(14.))
-                            .text_color(cx.theme().primary_foreground),
-                    )
+                    .icon(Icon::empty().path("icons/send.svg").size(px(14.)))
                     .disabled(is_disabled)
                     .on_click(cx.listener(|_, _, _window, cx| {
                         cx.emit(ChatInputEvent::Submit);

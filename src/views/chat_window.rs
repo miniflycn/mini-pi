@@ -387,7 +387,12 @@ impl ChatWindow {
         self.session_stats = s.session_stats.clone();
 
         self.chat_input.update(cx, |ci, cx| {
-            ci.set_commands(commands, cx);
+            // Don't wipe the globally-cached command list with the session's
+            // initial empty state. The session will refresh it once the
+            // bridge replies to get_commands.
+            if !commands.is_empty() {
+                ci.set_commands(commands, cx);
+            }
             ci.sync(selected_model, thinking_level, state, cx);
         });
     }

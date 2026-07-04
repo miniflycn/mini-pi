@@ -1,14 +1,18 @@
 import type { WebSocket } from "ws";
-import type {
-  AuthStorage,
-  ModelRegistry,
-  SettingsManager,
+import {
+  DefaultResourceLoader,
+  type AuthStorage,
+  type ModelRegistry,
+  type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import type { Logger, SessionState, CommandWireInfo, ModelWireInfo } from "./types.js";
 import { sendResponse, getMessagesFromSession } from "./messages.js";
 import type { SessionStore } from "./session.js";
+
+/** Routing id used for responses that are not tied to a real session. */
+const GLOBAL_SESSION_ID = "bridge";
 
 const BaseMessageSchema = Type.Object({
   type: Type.String(),
@@ -233,6 +237,24 @@ export interface GlobalCommandContext {
 export type SessionCommandHandler = (ctx: CommandContext) => Promise<void>;
 export type GlobalCommandHandler = (ctx: GlobalCommandContext) => Promise<void>;
 
+interface ResourceLoader {
+  reload?: () => Promise<void> | void;
+  getSkills?: () => Promise<unknown> | unknown;
+  getExtensions?: () => Promise<unknown> | unknown;
+  getPrompts?: () => Promise<unknown> | unknown;
+}
+
+function getResourceLoader(
+  runtime: unknown,
+): ResourceLoader | undefined {
+  const services = (runtime as Record<string, unknown> | undefined)?.services;
+  const loader =
+    services && typeof services === "object"
+      ? (services as Record<string, unknown>).resourceLoader
+      : undefined;
+  return loader as ResourceLoader | undefined;
+}
+
 function assertShape<T extends TSchema>(msg: InboundMessage, schema: T): Static<T> {
   if (!Value.Check(schema, msg)) {
     throw new Error("invalid message shape");
@@ -363,19 +385,60 @@ export async function handleGetMessages(ctx: CommandContext): Promise<void> {
   }
 }
 
-export async function handleGetCommands(ctx: CommandContext): Promise<void> {
-  const { ws, sessionId, state, msg } = ctx;
-  const loader = state.runtime.session.resourceLoader;
-  await loader.reload();
-  const promptsResult = (loader.getPrompts?.() as { prompts?: unknown[] }) ?? { prompts: [] };
-  const skillsResult = (loader.getSkills?.() as { skills?: unknown[] }) ?? { skills: [] };
+/**
+ * Return the effective slash-command list.
+ *
+ * If `sessionId` refers to a live bridge session, this uses that session's
+ * `resourceLoader` and `extensionRunner` so extension-registered commands are
+ * included. Otherwise it creates a standalone `DefaultResourceLoader` for the
+ * global no-session path (used at app startup).
+ */
+export async function handleGetCommands(
+  ctx: GlobalCommandContext,
+  store: SessionStore,
+  agentDir: string,
+): Promise<void> {
+  const { ws, sessionId, msg } = ctx;
+
+  let loader: ResourceLoader | undefined;
+  let extensionRunner: unknown;
+  if (sessionId) {
+    const state = store.get(sessionId);
+    if (state) {
+      loader = state.runtime.session.resourceLoader;
+      extensionRunner = (state.runtime.session as { extensionRunner?: unknown })
+        .extensionRunner;
+    }
+  }
+
+  if (!loader) {
+    loader = new DefaultResourceLoader({
+      cwd: process.cwd(),
+      agentDir,
+    });
+    extensionRunner = undefined;
+  }
+
+  // reload() is optional on the ResourceLoader contract; static loaders can
+  // skip it safely.
+  await loader.reload?.();
+  // getPrompts / getSkills may return either a plain object or a Promise;
+  // wrap them so we always await the result before iterating.
+  const promptsResult = (await Promise.resolve(
+    loader.getPrompts?.() ?? { prompts: [] },
+  )) as { prompts?: unknown[] };
+  const skillsResult = (await Promise.resolve(
+    loader.getSkills?.() ?? { skills: [] },
+  )) as { skills?: unknown[] };
   const prompts = promptsResult.prompts ?? [];
   const skills = skillsResult.skills ?? [];
   const commands: CommandWireInfo[] = [];
 
   // Extension commands (pi.registerCommand) live in the session's extension runner.
-  const extensionRunner = (state.runtime.session as { extensionRunner?: unknown }).extensionRunner;
-  const registeredCommands = Array.isArray((extensionRunner as { getRegisteredCommands?: () => unknown[] } | undefined)?.getRegisteredCommands?.())
+  const registeredCommands = Array.isArray(
+    (extensionRunner as { getRegisteredCommands?: () => unknown[] } | undefined)
+      ?.getRegisteredCommands?.(),
+  )
     ? (extensionRunner as { getRegisteredCommands: () => unknown[] }).getRegisteredCommands()
     : [];
   for (const cmd of registeredCommands) {
@@ -405,7 +468,7 @@ export async function handleGetCommands(ctx: CommandContext): Promise<void> {
       source: "skill",
     });
   }
-  sendResponse(ws, sessionId, "get_commands", msg.id, true, { commands });
+  sendResponse(ws, sessionId || GLOBAL_SESSION_ID, "get_commands", msg.id, true, { commands });
 }
 
 function normalizeResourceArray(raw: unknown): unknown[] {
@@ -447,24 +510,6 @@ function normalizeResourceItems(raw: unknown): unknown[] {
     description: extractResourceDescription(item) ?? "",
     raw: item,
   }));
-}
-
-interface ResourceLoader {
-  reload?: () => Promise<void> | void;
-  getSkills?: () => Promise<unknown> | unknown;
-  getExtensions?: () => Promise<unknown> | unknown;
-  getPrompts?: () => Promise<unknown> | unknown;
-}
-
-function getResourceLoader(
-  runtime: unknown,
-): ResourceLoader | undefined {
-  const services = (runtime as Record<string, unknown> | undefined)?.services;
-  const loader =
-    services && typeof services === "object"
-      ? (services as Record<string, unknown>).resourceLoader
-      : undefined;
-  return loader as ResourceLoader | undefined;
 }
 
 export async function handleGetSkills(ctx: CommandContext): Promise<void> {
@@ -732,7 +777,6 @@ export const sessionCommands = new Map<string, SessionCommandHandler>([
   ["fork", handleFork],
   ["clone", handleClone],
   ["get_messages", handleGetMessages],
-  ["get_commands", handleGetCommands],
   ["get_skills", handleGetSkills],
   ["get_extensions", handleGetExtensions],
   ["get_prompts", handleGetPrompts],
