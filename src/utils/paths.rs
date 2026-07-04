@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::process::Command;
 
 /// Return the directory that contains the application's runtime resources
 /// (`assets/`, `pi-bridge/`, etc.).
@@ -32,6 +33,34 @@ fn app_root_from_exe() -> Option<PathBuf> {
 
     if exe_dir.join("assets").is_dir() {
         return Some(exe_dir);
+    }
+
+    None
+}
+
+/// Locate the Bun runtime bundled with the application, falling back to a
+/// system-installed `bun` on `PATH`.
+///
+/// Release builds ship the platform-specific Bun binary next to the app
+/// resources (`Mini Pi.app/Contents/Resources/bun` on macOS, or in the same
+/// directory as the executable on Windows/Linux). During development the
+/// executable lives under `target/`, so the bundled binary is usually absent
+/// and this helper falls back to a system `bun`.
+pub fn find_bun() -> Option<PathBuf> {
+    let root = app_root();
+
+    let bundled = if cfg!(windows) {
+        root.join("bun.exe")
+    } else {
+        root.join("bun")
+    };
+    if bundled.exists() {
+        return Some(bundled);
+    }
+
+    // Development fallback: a system-installed bun.
+    if Command::new("bun").arg("--version").output().is_ok() {
+        return Some(PathBuf::from("bun"));
     }
 
     None

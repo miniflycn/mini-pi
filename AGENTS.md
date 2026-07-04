@@ -102,7 +102,7 @@ Self-contained installers are built from the scripts in `scripts/`:
 - `scripts/build-windows.ps1` produces `target/mini-pi-<version>-x64.msi`.
 - `scripts/build-macos.sh` produces `target/mini-pi-<version>-x64.dmg`.
 
-Both scripts compile `pi-bridge` into a single standalone executable using `bun build --compile`, so end users do not need Bun or Node.js installed. They are also driven by `.github/workflows/release.yml` on version tags.
+Both scripts download the platform-specific Bun runtime and bundle it alongside the `pi-bridge` source and its production dependencies, so end users do not need Bun or Node.js installed. They are also driven by `.github/workflows/release.yml` on version tags.
 
 ### Packaging layout
 
@@ -209,7 +209,7 @@ Dropdowns handle `up`, `down`, `enter`, and `escape` internally. The chat input'
 
 ## External SDK Dependency
 
-This application is a thin GUI wrapper around the `@earendil-works/pi-coding-agent` SDK, run inside a local pi-bridge process. Release builds ship a compiled bridge executable; for development, Bun and installed `pi-bridge/node_modules` are required. Chat functionality will fail at runtime when `PiBridge::spawn` is called if no bridge executable or Bun runtime is available. The wire protocol is documented by the `BridgeEvent` enum and the multiplexed JSON messages in `src/rpc/pi_rpc.rs`.
+This application is a thin GUI wrapper around the `@earendil-works/pi-coding-agent` SDK, run inside a local pi-bridge process. Release builds ship the Bun runtime plus a single bundled `pi-bridge.js` produced by `bun build --target bun --outfile pi-bridge.js`; the Rust app spawns `bun run pi-bridge.js` directly. For development, Bun and installed `pi-bridge/node_modules` are required. Chat functionality will fail at runtime when `PiBridge::spawn` is called if no Bun runtime or bridge bundle/source is available. The wire protocol is documented by the `BridgeEvent` enum and the multiplexed JSON messages in `src/rpc/pi_rpc.rs`.
 
 ## Security Considerations
 
@@ -239,7 +239,7 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 - The slash-command / skill list is loaded once at startup from the SDK bridge and cached in `AppStore.commands` (`src/config/command_config.rs`). New composer `ChatInput`s are seeded with this list so the `/` popup works immediately; each session still refreshes the list via `get_commands` when it starts.
 - When adding database changes, append a new migration tuple to `MIGRATIONS` in `src/data/store.rs`.
 - Assets are loaded at runtime via `core::assets::Assets`. The asset root is resolved from the executable path (`src/utils/paths::app_root`), so packaged releases keep `assets/` next to the binary (Windows) or inside `Mini Pi.app/Contents/Resources` (macOS). During development the helper falls back to `CARGO_MANIFEST_DIR`.
-- The `pi-bridge/` directory is resolved the same way. Release builds ship a compiled `pi-bridge`/`pi-bridge.exe` executable produced by `bun build --compile`; during development the bridge is run with `bun run src/index.ts`.
+- The `pi-bridge/` directory is resolved the same way. Release builds ship the platform-specific Bun binary (`bun` on macOS/Linux, `bun.exe` on Windows) plus a single bundled `pi-bridge.js` in the app root; during development the bridge is run with `bun run src/index.ts`.
 - The app is primarily developed and tested on macOS. Windows-specific and Linux-specific code exists (e.g. `CREATE_NO_WINDOW`, client-side titlebar controls, `wmctrl`) but may need verification.
 - The `pi-bridge/` directory must have its dependencies installed with `bun install` before running the app outside an installer.
 - The wire protocol between Rust and the bridge uses a single WebSocket connection; every message includes a `sessionId` so multiple chat sessions can share one connection.

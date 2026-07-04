@@ -62,21 +62,19 @@ if [ ! -d "$BUN_DIR" ]; then
 fi
 BUN_BIN="$BUN_DIR/${BUN_ZIP%.zip}/bun"
 
-echo "Preparing production pi-bridge..."
-rm -rf "$PACKAGE"
-mkdir -p "$PACKAGE/pi-bridge"
-cp "$ROOT/pi-bridge/package.json" "$PACKAGE/pi-bridge/"
-cp "$ROOT/pi-bridge/tsconfig.json" "$PACKAGE/pi-bridge/"
-cp -R "$ROOT/pi-bridge/src" "$PACKAGE/pi-bridge/"
-(cd "$PACKAGE/pi-bridge" && "$BUN_BIN" install --production)
+MINI_PI_DIR="$HOME/.mini-pi"
+BUN_CACHE_DIR="$MINI_PI_DIR/bun-cache"
+mkdir -p "$BUN_CACHE_DIR/install-cache"
 
-echo "Compiling pi-bridge into a standalone executable..."
-(cd "$PACKAGE/pi-bridge" && "$BUN_BIN" build --compile src/index.ts --outfile pi-bridge)
+echo "Bundling pi-bridge with --target bun..."
+(cd "$PACKAGE/pi-bridge" && BUN_INSTALL="$BUN_CACHE_DIR" BUN_INSTALL_CACHE_DIR="$BUN_CACHE_DIR/install-cache" "$BUN_BIN" build --target bun src/index.ts --outfile pi-bridge.js)
 
-echo "Injecting pi-bridge executable into app bundle..."
+echo "Injecting Bun runtime and pi-bridge bundle into app bundle..."
 rm -rf "$APP_BUNDLE/Contents/Resources/pi-bridge"
-mkdir -p "$APP_BUNDLE/Contents/Resources/pi-bridge"
-cp "$PACKAGE/pi-bridge/pi-bridge" "$APP_BUNDLE/Contents/Resources/pi-bridge/pi-bridge"
+rm -f "$APP_BUNDLE/Contents/Resources/pi-bridge.js"
+cp "$PACKAGE/pi-bridge/pi-bridge.js" "$APP_BUNDLE/Contents/Resources/pi-bridge.js"
+cp "$BUN_BIN" "$APP_BUNDLE/Contents/Resources/bun"
+chmod +x "$APP_BUNDLE/Contents/Resources/bun"
 
 DMG_TMP="$ROOT/target/mini-pi-dmg"
 rm -rf "$DMG_TMP"

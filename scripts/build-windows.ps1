@@ -46,17 +46,22 @@ if (-not (Test-Path $bunExtract)) {
 }
 $bunExe = Join-Path $bunExtract "bun-windows-x64\bun.exe"
 
-Write-Host "Installing production Bun dependencies for pi-bridge..."
+Write-Host "Bundling pi-bridge with --target bun..."
 Push-Location $bridgeStage
-& $bunExe install --production
-if ($LASTEXITCODE -ne 0) { throw "bun install failed" }
 
-Write-Host "Compiling pi-bridge into a standalone executable..."
-& $bunExe build --compile src/index.ts --outfile pi-bridge.exe
-if ($LASTEXITCODE -ne 0) { throw "bun build --compile failed" }
+$miniPiDir = Join-Path $env:USERPROFILE ".mini-pi"
+$bunCacheDir = Join-Path $miniPiDir "bun-cache"
+New-Item -ItemType Directory -Force -Path (Join-Path $bunCacheDir "install-cache") | Out-Null
+
+$env:BUN_INSTALL = $bunCacheDir
+$env:BUN_INSTALL_CACHE_DIR = Join-Path $bunCacheDir "install-cache"
+& $bunExe build --target bun src/index.ts --outfile pi-bridge.js
+if ($LASTEXITCODE -ne 0) { throw "bun build --target bun failed" }
 Pop-Location
 
-Copy-Item (Join-Path $bridgeStage "pi-bridge.exe") $package
+Write-Host "Copying Bun runtime and pi-bridge bundle into package..."
+Copy-Item $bunExe $package
+Copy-Item (Join-Path $bridgeStage "pi-bridge.js") "$package\pi-bridge.js"
 
 $wixZip = Join-Path $tools "wix311-binaries.zip"
 $wixDir = Join-Path $tools "wix"

@@ -120,6 +120,12 @@ pub fn mini_pi_dir() -> PathBuf {
         .join(".mini-pi")
 }
 
+pub fn bun_cache_dir() -> PathBuf {
+    let dir = mini_pi_dir().join("bun-cache");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
 pub fn agent_dir() -> PathBuf {
     let dir = mini_pi_dir().join("agent");
     let _ = std::fs::create_dir_all(&dir);

@@ -226,16 +226,16 @@ impl Drop for SessionGuard {
 
 impl PiBridge {
     pub fn spawn() -> Result<Arc<Self>, PiRpcError> {
-        let bridge_dir = crate::utils::paths::app_root().join("pi-bridge");
-        let (program, args) = find_runtime(&bridge_dir)?;
+        let app_root = crate::utils::paths::app_root();
+        let (program, args, cwd) = find_runtime(&app_root)?;
 
         let agent_dir = dirs::home_dir()
             .map(|h| h.join(".mini-pi").join("agent"))
-            .unwrap_or_else(|| bridge_dir.join("agent"));
+            .unwrap_or_else(|| app_root.join("agent"));
 
         let mut cmd = Command::new(&program);
         cmd.args(&args)
-            .current_dir(&bridge_dir)
+            .current_dir(&cwd)
             .arg("--agent-dir")
             .arg(&agent_dir);
         cmd.stdin(Stdio::null())
@@ -1293,61 +1293,37 @@ impl PiRpc {
 // Bridge process helpers
 // ---------------------------------------------------------------------------
 
-fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcError> {
-    // Release builds compile the bridge into a single executable with
-    // `bun build --compile`. No separate runtime or node_modules is needed.
-    let compiled_names: [&str; 2] = if cfg!(windows) {
-        ["pi-bridge.exe", "pi-bridge"]
-    } else {
-        ["pi-bridge", "pi-bridge.exe"]
-    };
-    for name in compiled_names.iter() {
-        let exe = bridge_dir.join(name);
-        if exe.exists() {
-            return Ok((exe.to_string_lossy().to_string(), vec![]));
+fn find_runtime(app_root: &PathBuf) -> Result<(String, Vec<String>, PathBuf), PiRpcError> {
+    // Release builds ship a single bundled `pi-bridge.js` in the app root,
+    // produced by `bun build --target bun --outfile pi-bridge.js`. Run it
+    // directly; no `node_modules` or package manifests are needed.
+    let bundle = app_root.join("pi-bridge.js");
+    if bundle.exists() {
+        if let Some(bun) = crate::utils::paths::find_bun() {
+            return Ok((
+                bun.to_string_lossy().to_string(),
+                vec!["run".to_string(), bundle.to_string_lossy().to_string()],
+                app_root.clone(),
+            ));
         }
     }
 
-    // Development fallback: a bundled bun binary that runs src/index.ts.
+    // Development fallback: run pi-bridge/src/index.ts with a system or bundled Bun.
+    let bridge_dir = app_root.join("pi-bridge");
     let src_ts = bridge_dir.join("src").join("index.ts");
     if src_ts.exists() {
-        let bun_candidates: Vec<PathBuf> = if cfg!(windows) {
-            vec![
-                bridge_dir.join("bun.exe"),
-                bridge_dir
-                    .parent()
-                    .map(|p| p.join("bun.exe"))
-                    .unwrap_or_default(),
-            ]
-        } else {
-            vec![
-                bridge_dir.join("bun"),
-                bridge_dir
-                    .parent()
-                    .map(|p| p.join("bun"))
-                    .unwrap_or_default(),
-            ]
-        };
-        for bun in bun_candidates {
-            if bun.exists() {
-                return Ok((
-                    bun.to_string_lossy().to_string(),
-                    vec!["run".to_string(), "src/index.ts".to_string()],
-                ));
-            }
-        }
-
-        // Fallback to a system-installed bun.
-        if Command::new("bun").arg("--version").output().is_ok() {
+        if let Some(bun) = crate::utils::paths::find_bun() {
             return Ok((
-                "bun".to_string(),
+                bun.to_string_lossy().to_string(),
                 vec!["run".to_string(), "src/index.ts".to_string()],
+                bridge_dir,
             ));
         }
     }
 
     Err(PiRpcError::Spawn(
-        "no bun runtime found (tried compiled pi-bridge, bundled bun, system bun).".to_string(),
+        "no Bun runtime or pi-bridge bundle found (tried pi-bridge.js, pi-bridge/src/index.ts, system bun)."
+            .to_string(),
     ))
 }
 

@@ -6,7 +6,8 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::Scrollbar;
 use gpui_component::{ActiveTheme, Disableable as _, Sizable as _, TitleBar};
 
-use crate::auth::state::agent_dir;
+use crate::auth::state::{agent_dir, bun_cache_dir};
+use crate::utils::paths::find_bun;
 
 const SEARCH_URL: &str = "https://registry.npmjs.org/-/v1/search?text=@remnic/plugin-pi";
 
@@ -67,7 +68,7 @@ impl InstallExtensionWindow {
         let name_for_update = package_name.clone();
         let weak = cx.entity().downgrade();
         cx.spawn(async move |_, cx| {
-            let result = smol::unblock(move || run_npm_install(&package_name, &agent_dir)).await;
+            let result = smol::unblock(move || run_bun_install(&package_name, &agent_dir)).await;
             let _ = weak.update(cx, |this, cx| {
                 this.installing = None;
                 this.last_result = Some((
@@ -124,7 +125,7 @@ impl Render for InstallExtensionWindow {
                         div()
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Searching npm..."),
+                            .child("Searching registry..."),
                     ),
             );
         } else if let Some(ref err) = self.error {
@@ -391,53 +392,46 @@ fn fetch_npm_packages() -> Result<Vec<NpmPackage>, String> {
     Ok(packages)
 }
 
-fn run_npm_install(package_name: &str, cwd: &std::path::Path) -> Result<String, String> {
-    let programs: &[&str] = if cfg!(windows) {
-        &["npm.cmd", "npm"]
-    } else {
-        &["npm"]
-    };
+fn run_bun_install(package_name: &str, cwd: &std::path::Path) -> Result<String, String> {
+    let bun =
+        find_bun().ok_or("Bun runtime not found. Make sure the app is installed correctly.")?;
+    let cache_dir = bun_cache_dir();
 
-    let mut last_error = String::new();
-    for program in programs {
-        let mut cmd = std::process::Command::new(program);
-        cmd.args(["install", package_name])
-            .current_dir(cwd)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+    let mut cmd = std::process::Command::new(&bun);
+    cmd.args(["install", package_name])
+        .env("BUN_INSTALL", &cache_dir)
+        .env("BUN_INSTALL_CACHE_DIR", cache_dir.join("install-cache"))
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
 
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
 
-        match cmd.output() {
-            Ok(output) => {
-                let mut text = String::new();
-                if let Ok(stdout) = String::from_utf8(output.stdout.clone()) {
-                    text.push_str(&stdout);
-                }
-                if let Ok(stderr) = String::from_utf8(output.stderr.clone()) {
-                    if !stderr.is_empty() {
-                        if !text.is_empty() {
-                            text.push('\n');
-                        }
-                        text.push_str(&stderr);
-                    }
-                }
-                if output.status.success() {
-                    return Ok(text);
-                } else {
-                    last_error = format!("npm install failed: {}", text);
-                }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to run bun: {}", e))?;
+
+    let mut text = String::new();
+    if let Ok(stdout) = String::from_utf8(output.stdout.clone()) {
+        text.push_str(&stdout);
+    }
+    if let Ok(stderr) = String::from_utf8(output.stderr.clone()) {
+        if !stderr.is_empty() {
+            if !text.is_empty() {
+                text.push('\n');
             }
-            Err(e) => {
-                last_error = format!("failed to run {}: {}", program, e);
-            }
+            text.push_str(&stderr);
         }
     }
 
-    Err(last_error)
+    if output.status.success() {
+        Ok(text)
+    } else {
+        Err(format!("bun install failed: {}", text))
+    }
 }

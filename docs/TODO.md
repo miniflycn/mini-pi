@@ -14,10 +14,10 @@
 - [x] Add a button to scroll to the bottom when user just scrolled
 - [x] Thread title can be changed by clicking on it
 - [x] Support cloudflare bearer token settings for tunnel
-- [ ] Change delete button to archive button
-- [ ] Connect to mcps and do external stuff
-- [ ] Bundle bun instead of js and runtime bundle
+- [x] Bundle bun instead of js and runtime bundle
 - [ ] Use a curated list of pi extensions
+- [ ] Connect to mcps and do external stuff
+- [ ] Change delete button to archive button
 - [ ] Message display optimization, virtualize it
 - [ ] Steering, follow up and message queue
 - [ ] Auto update and release channel
