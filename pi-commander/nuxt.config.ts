@@ -62,6 +62,10 @@ export default defineNuxtConfig({
       openAPI: true
     },
 
+    prerender: {
+      routes: ['/']
+    },
+
     cloudflare: {
       deployConfig: true,
       nodeCompat: true
@@ -127,8 +131,9 @@ export default defineNuxtConfig({
     },
     workbox: {
       globPatterns: ['**/*.{js,css,html,png,svg,ico,webmanifest,woff2}'],
-      navigateFallback: '/offline',
+      navigateFallback: '/',
       navigateFallbackDenylist: [/^\/api\//, /^\/vendor\//],
+      cleanupOutdatedCaches: true,
       maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
       runtimeCaching: [
         {
