@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Generate Windows .ico and macOS .icns icons from assets/icons/pi.svg."""
+"""Generate Windows .ico and macOS .icns icons from assets/icons/pi.svg.
 
+The original SVG is left untouched; this script wraps it with a black
+background and a green foreground colour before rendering the bitmaps.
+"""
+
+import re
 from pathlib import Path
 
 import cairosvg
@@ -13,6 +18,9 @@ ICNS_PATH = ROOT / "scripts" / "installer" / "app.icns"
 ICO_SIZES = [16, 32, 48, 64, 128, 256]
 ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
 
+ICON_GREEN = "#7fff6e"
+ICON_BACKGROUND = "#000000"
+
 # Apple ICNS type codes for PNG-encoded images.
 ICNS_TYPES = {
     16: b"icp4",
@@ -23,6 +31,24 @@ ICNS_TYPES = {
     512: b"ic09",
     1024: b"ic10",
 }
+
+
+def apply_icon_theme(svg: bytes) -> bytes:
+    """Wrap the source icon so it renders as green on a black background.
+
+    The original SVG file is not modified; this transformation happens on
+    the bytes read into memory before rendering.
+    """
+    text = svg.decode("utf-8")
+    match = re.search(r"<svg[^>]*>(.*)</svg>", text, re.DOTALL | re.IGNORECASE)
+    inner = match.group(1) if match else text
+    themed = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">'
+        f'<rect width="800" height="800" fill="{ICON_BACKGROUND}"/>'
+        f'<g color="{ICON_GREEN}">{inner}</g>'
+        "</svg>"
+    )
+    return themed.encode("utf-8")
 
 
 def render_png(svg: bytes, size: int) -> bytes:
@@ -81,8 +107,9 @@ def write_icns(svg: bytes, sizes: list[int], out: Path) -> None:
 
 def main() -> None:
     svg = SVG_PATH.read_bytes()
-    write_ico(svg, ICO_SIZES, ICO_PATH)
-    write_icns(svg, ICNS_SIZES, ICNS_PATH)
+    themed = apply_icon_theme(svg)
+    write_ico(themed, ICO_SIZES, ICO_PATH)
+    write_icns(themed, ICNS_SIZES, ICNS_PATH)
 
 
 if __name__ == "__main__":
