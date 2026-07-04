@@ -11,6 +11,7 @@ use gpui_component::{ActiveTheme, Icon, Root, Sizable, TitleBar};
 
 use crate::auth::state::{self, AuthState};
 use crate::config::app_config::{AppConfig, DEFAULT_DARK_THEME, FontSizePreset};
+use crate::config::command_config;
 use crate::config::model_config;
 use crate::core::actions::{
     About, Login, OpenInstallExtensionWindow, OpenPiSettingsWindow, Quit, SelectFontLarge,
@@ -134,6 +135,20 @@ pub fn run() {
                 );
             }
 
+            let commands = pi_bridge
+                .as_ref()
+                .map(|bridge| match command_config::load_commands(bridge) {
+                    Ok(commands) => {
+                        eprintln!("[mini-pi] loaded {} commands", commands.len());
+                        commands
+                    }
+                    Err(e) => {
+                        eprintln!("[mini-pi] failed to load command list: {}", e);
+                        Vec::new()
+                    }
+                })
+                .unwrap_or_default();
+
             let remote_controller =
                 cx.new(|cx| RemoteController::new(cx, config.remote_control.clone()));
 
@@ -146,6 +161,7 @@ pub fn run() {
                 pi_bridge.clone(),
                 Some(remote_controller),
                 models,
+                commands,
             ));
 
             if auth.is_logged_in() {

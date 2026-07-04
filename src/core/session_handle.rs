@@ -6,6 +6,7 @@ use gpui::prelude::*;
 use gpui::{Context, EventEmitter, SharedString, Task};
 use uuid::Uuid;
 
+use crate::config::command_config::{CommandItem, parse_command_items};
 use crate::config::model_config::parse_model_id;
 use crate::core::app::AppStore;
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
@@ -13,7 +14,6 @@ use crate::data::store::Store;
 use crate::rpc::pi_rpc::{
     BridgeEvent, ImageContent, LoadedMessage, LoadedPart, PiRpc, is_assistant_error,
 };
-use crate::ui::chat_input::CommandItem;
 use crate::utils::format::truncate_str;
 use crate::utils::llm::generate_title;
 
@@ -1250,30 +1250,8 @@ impl SessionHandle {
                 if command == "get_commands"
                     && success
                     && let Some(ref data_val) = data
-                    && let Some(commands) = data_val.get("commands")
-                    && let Some(arr) = commands.as_array()
                 {
-                    let items: Vec<CommandItem> = arr
-                        .iter()
-                        .filter_map(|cmd| {
-                            let name = cmd.get("name")?.as_str()?.to_string();
-                            let description = cmd
-                                .get("description")
-                                .and_then(|d| d.as_str())
-                                .map(|s| s.to_string());
-                            let source = cmd
-                                .get("source")
-                                .and_then(|s| s.as_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-                            Some(CommandItem {
-                                name,
-                                description,
-                                source,
-                            })
-                        })
-                        .collect();
-                    self.commands = items;
+                    self.commands = parse_command_items(data_val);
                 }
                 if command == "get_session_stats" && success {
                     if let Some(ref data_val) = data {

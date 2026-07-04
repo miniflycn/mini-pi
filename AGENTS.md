@@ -34,6 +34,7 @@ src/core/
   assets.rs             # AssetSource implementation that loads SVGs from the assets/ directory
 src/config/
   app_config.rs         # ~/.config/mini-pi/config.json (font_size, remote_control, theme)
+  command_config.rs     # Slash-command item type, parsing, and startup load from the bridge
   model_config.rs       # Hardcoded model list and provider/name helpers
 src/data/
   models.rs             # Domain enums: Role, PartState, MessagePart, Message, ChatState
@@ -235,6 +236,7 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 
 - `docs/` contains internal reference material, not project user documentation.
 - The model list is loaded dynamically at startup from the SDK bridge via `ModelRegistry.getAvailable()` and stored in `AppStore.models`. `src/config/model_config.rs` exposes the helpers (`all_models`, `get_model_name`, `model_display_name`, `parse_model_id`) that take a `&[ModelInfo]` slice. Model IDs use a `<provider>:<model>` format parsed by `parse_model_id`.
+- The slash-command / skill list is loaded once at startup from the SDK bridge and cached in `AppStore.commands` (`src/config/command_config.rs`). New composer `ChatInput`s are seeded with this list so the `/` popup works immediately; each session still refreshes the list via `get_commands` when it starts.
 - When adding database changes, append a new migration tuple to `MIGRATIONS` in `src/data/store.rs`.
 - Assets are loaded at runtime via `core::assets::Assets`. The asset root is resolved from the executable path (`src/utils/paths::app_root`), so packaged releases keep `assets/` next to the binary (Windows) or inside `Mini Pi.app/Contents/Resources` (macOS). During development the helper falls back to `CARGO_MANIFEST_DIR`.
 - The `pi-bridge/` directory is resolved the same way. Release builds ship a compiled `pi-bridge`/`pi-bridge.exe` executable produced by `bun build --compile`; during development the bridge is run with `bun run src/index.ts`.

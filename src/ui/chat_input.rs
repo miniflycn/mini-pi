@@ -18,6 +18,7 @@ use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
 };
 
+use crate::config::command_config::{CommandItem, filter_command_items};
 use crate::config::model_config::{ModelInfo, all_models};
 use crate::core::app::AppStore;
 use crate::data::models::ChatState;
@@ -30,13 +31,6 @@ pub struct MentionItem {
     pub relative_path: String,
     pub absolute_path: PathBuf,
     pub is_dir: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct CommandItem {
-    pub name: String,
-    pub description: Option<String>,
-    pub source: String,
 }
 
 #[derive(Clone, Debug)]
@@ -169,17 +163,22 @@ impl ChatInput {
 
     /// Create a full composer chat input with toolbar, model/thinking
     /// dropdowns, attachment handling, voice input, and popup autocomplete.
+    ///
+    /// `commands` seeds the `/` slash-command popup so it is usable
+    /// immediately, before the per-session command list arrives.
     pub fn new_composer(
         window: &mut Window,
         cx: &mut Context<Self>,
         placeholder: impl Into<SharedString>,
         models: &[ModelInfo],
+        commands: &[CommandItem],
         selected_model: Option<String>,
         selected_thinking_level: Option<String>,
     ) -> Self {
         let mut this = Self::build(window, cx, placeholder, true);
         this.selected_model = selected_model.clone();
         this.thinking_level = selected_thinking_level.clone();
+        this.available_commands = commands.to_vec();
 
         // Build model dropdown items
         let model_items: Vec<SelectModelItem> = all_models(models)
@@ -1881,32 +1880,4 @@ fn parse_slash_command(content: &str, cursor: usize) -> Option<AtMentionParse> {
         query,
         replace_range: replace_start..replace_end,
     })
-}
-
-fn filter_command_items(items: &[CommandItem], query: &str) -> Vec<CommandItem> {
-    if query.is_empty() {
-        return items.iter().take(50).cloned().collect();
-    }
-    let q = query.to_lowercase();
-    let mut matches: Vec<(CommandItem, usize)> = items
-        .iter()
-        .filter_map(|item| {
-            let name_lower = item.name.to_lowercase();
-            let desc_lower = item.description.as_deref().unwrap_or("").to_lowercase();
-            if name_lower.contains(&q) || desc_lower.contains(&q) {
-                let score = if name_lower.starts_with(&q) {
-                    100
-                } else if name_lower.contains(&q) {
-                    50
-                } else {
-                    10
-                };
-                Some((item.clone(), score))
-            } else {
-                None
-            }
-        })
-        .collect();
-    matches.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.name.cmp(&b.0.name)));
-    matches.into_iter().take(50).map(|(item, _)| item).collect()
 }

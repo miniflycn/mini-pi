@@ -10,6 +10,7 @@ use gpui::{
 
 use crate::auth::state::{AuthState, SupabaseSession};
 use crate::config::app_config::{AppConfig, FontSizePreset};
+use crate::config::command_config::CommandItem;
 use crate::config::model_config::ModelInfo;
 use crate::core::session_manager::SessionManager;
 use crate::data::store::Store;
@@ -43,6 +44,7 @@ pub struct AppStore {
     streaming_thread_ids: HashSet<String>,
     pub remote_controller: Option<Entity<RemoteController>>,
     pub models: Vec<ModelInfo>,
+    pub commands: Vec<CommandItem>,
 }
 
 impl AppStore {
@@ -55,6 +57,7 @@ impl AppStore {
         pi_bridge: Option<Arc<PiBridge>>,
         remote_controller: Option<Entity<RemoteController>>,
         models: Vec<ModelInfo>,
+        commands: Vec<CommandItem>,
     ) -> Self {
         Self {
             store,
@@ -72,6 +75,7 @@ impl AppStore {
             streaming_thread_ids: HashSet::new(),
             remote_controller,
             models,
+            commands,
         }
     }
 

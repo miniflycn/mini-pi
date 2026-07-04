@@ -189,12 +189,14 @@ impl ChatWindow {
                 name: ws.name.clone(),
             });
 
+        let commands = cx.global::<AppStore>().commands.clone();
         let chat_input = cx.new(|cx| {
             ChatInput::new_composer(
                 window,
                 cx,
                 "Type a message...",
                 &models,
+                &commands,
                 selected_model.clone(),
                 selected_thinking_level.clone(),
             )

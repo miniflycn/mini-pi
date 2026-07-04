@@ -573,6 +573,63 @@ impl PiBridge {
         })
     }
 
+    /// Query the bridge for the effective slash-command list.
+    ///
+    /// Returns the full response `data` object (which contains a `commands`
+    /// array) so callers can parse it consistently with the per-session
+    /// `get_commands` response.
+    pub fn get_commands(&self) -> Result<serde_json::Value, PiRpcError> {
+        let session_id = format!("__commands__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let req = serde_json::json!({
+            "type": "get_commands",
+            "sessionId": session_id,
+            "id": request_id,
+        });
+        if let Err(e) = self.send_json(&req) {
+            return Err(e);
+        }
+
+        let result = self.runtime.block_on(async {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command,
+                    success,
+                    data,
+                    error,
+                    ..
+                } = event
+                {
+                    if command == "get_commands" {
+                        if success {
+                            return Ok(
+                                data.unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
+                            );
+                        }
+                        return Err(PiRpcError::Bridge(
+                            error.unwrap_or_else(|| "get_commands failed".into()),
+                        ));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(
+                "bridge closed before get_commands response".into(),
+            ))
+        });
+
+        result
+    }
+
     pub fn get_providers(&self) -> Result<Vec<BridgeProvider>, PiRpcError> {
         let session_id = format!("__providers__{}", Uuid::new_v4());
         let request_id = Uuid::new_v4().to_string();
