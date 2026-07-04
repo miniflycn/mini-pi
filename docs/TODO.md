@@ -15,6 +15,7 @@
 - [x] Thread title can be changed by clicking on it
 - [x] Support cloudflare bearer token settings for tunnel
 - [ ] Change delete button to archive button
+- [ ] Connect to mcps and do external stuff
 - [ ] Bundle bun instead of js and runtime bundle
 - [ ] Use a curated list of pi extensions
 - [ ] Message display optimization, virtualize it
@@ -26,8 +27,8 @@
 
 # Pi-Commander
 - [x] Cannot stop
+- [x] You’re offline page is cached and became the homepage!
 - [ ] Refresh workspace, model on settings change
-- [ ] You’re offline page is cached and became the homepage!
 - [ ] Even if bearer token is false, token is saved!
 
 # Bug

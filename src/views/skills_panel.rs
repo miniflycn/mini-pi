@@ -1,17 +1,24 @@
 use std::path::Path;
 
 use gpui::{
-    Action, Context, IntoElement, Render, ScrollHandle, SharedString, Window, div, prelude::*, px,
+    Action, App, Bounds, Context, IntoElement, Render, ScrollHandle, SharedString, Window,
+    WindowBounds, WindowDecorations, WindowOptions, div, prelude::*, px, size,
 };
 use gpui_component::ActiveTheme;
 use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::input::{Input, InputState};
+use gpui_component::notification::Notification;
 use gpui_component::scroll::Scrollbar;
-use gpui_component::{Icon, Sizable as _, Size};
+use gpui_component::{Icon, Root, Sizable as _, Size, TitleBar, WindowExt as _};
 
+use crate::auth::state::agent_dir;
 use crate::core::actions::OpenInstallExtensionWindow;
 use crate::core::app::AppStore;
 use crate::rpc::pi_rpc::{BridgeExtension, BridgePrompt, BridgeSkill};
 use crate::ui::loader::loader;
+
+type ResourceLoadResult =
+    Result<(Vec<BridgeSkill>, Vec<BridgeExtension>, Vec<BridgePrompt>), String>;
 
 /// A panel that lists the effective skills, extensions, and prompts currently
 /// loaded by the pi-bridge runtime.
@@ -57,10 +64,7 @@ impl SkillsPanel {
 
         let weak = cx.entity().downgrade();
         cx.spawn(async move |_, cx| {
-            let result: Result<
-                (Vec<BridgeSkill>, Vec<BridgeExtension>, Vec<BridgePrompt>),
-                String,
-            > = smol::unblock(move || {
+            let result: ResourceLoadResult = smol::unblock(move || {
                 let bridge = bridge.as_ref().unwrap();
                 let skills = bridge.get_skills().map_err(|e| e.to_string())?;
                 let extensions = bridge.get_extensions().map_err(|e| e.to_string())?;
@@ -156,6 +160,20 @@ impl Render for SkillsPanel {
                     window.dispatch_action(OpenInstallExtensionWindow.boxed_clone(), cx);
                 }));
 
+            let skills_panel = cx.entity();
+            let add_prompt_button = Button::new("add-prompt")
+                .with_size(Size::Small)
+                .ghost()
+                .icon(
+                    Icon::empty()
+                        .path("icons/plus.svg")
+                        .size(px(14.))
+                        .text_color(cx.theme().muted_foreground),
+                )
+                .on_click(cx.listener(move |_this, _, _window, cx| {
+                    open_create_prompt_window(cx, skills_panel.clone());
+                }));
+
             content = content
                 .child(render_section(
                     "Skills",
@@ -214,7 +232,7 @@ impl Render for SkillsPanel {
                             )
                         })
                         .collect(),
-                    div(),
+                    add_prompt_button,
                     cx,
                 ));
         }
@@ -333,15 +351,15 @@ fn render_section(
                         }),
                 );
 
-            if let Some(desc) = description {
-                if !desc.is_empty() {
-                    card = card.child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(desc),
-                    );
-                }
+            if let Some(desc) = description
+                && !desc.is_empty()
+            {
+                card = card.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(desc),
+                );
             }
 
             section = section.child(card);
@@ -349,4 +367,291 @@ fn render_section(
     }
 
     section
+}
+
+fn sanitize_prompt_filename(title: &str) -> String {
+    let mut sanitized: String = title
+        .chars()
+        .map(|c| {
+            if c.is_whitespace() || c == '_' {
+                '-'
+            } else {
+                c
+            }
+        })
+        .filter(|c| c.is_alphanumeric() || *c == '-')
+        .collect();
+
+    // Collapse consecutive hyphens.
+    let mut collapsed = String::with_capacity(sanitized.len());
+    let mut prev = None;
+    for c in sanitized.chars() {
+        if c == '-' && prev == Some('-') {
+            continue;
+        }
+        collapsed.push(c);
+        prev = Some(c);
+    }
+    sanitized = collapsed;
+
+    sanitized = sanitized.trim_matches('-').to_string();
+    if sanitized.is_empty() {
+        "prompt".to_string()
+    } else {
+        sanitized
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Create-prompt window
+// -----------------------------------------------------------------------------
+
+pub struct CreatePromptWindow {
+    title_input: gpui::Entity<InputState>,
+    body_input: gpui::Entity<InputState>,
+    error: Option<String>,
+    skills_panel: gpui::Entity<SkillsPanel>,
+    _title_sub: gpui::Subscription,
+    _body_sub: gpui::Subscription,
+}
+
+impl CreatePromptWindow {
+    pub fn new(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        skills_panel: gpui::Entity<SkillsPanel>,
+    ) -> Self {
+        let title_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Prompt name")
+                .multi_line(false)
+        });
+        let body_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Prompt content...")
+                .multi_line(true)
+                .rows(10)
+                .submit_on_enter(false)
+        });
+
+        let _title_sub = cx.observe(&title_input, |_, _, cx| {
+            cx.notify();
+        });
+        let _body_sub = cx.observe(&body_input, |_, _, cx| {
+            cx.notify();
+        });
+
+        Self {
+            title_input,
+            body_input,
+            error: None,
+            skills_panel,
+            _title_sub,
+            _body_sub,
+        }
+    }
+
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let title = self.title_input.read(cx).value().to_string();
+        let body = self.body_input.read(cx).value().to_string();
+
+        if title.trim().is_empty() {
+            self.error = Some("Prompt title is required.".to_string());
+            cx.notify();
+            return;
+        }
+        if body.trim().is_empty() {
+            self.error = Some("Prompt content is required.".to_string());
+            cx.notify();
+            return;
+        }
+
+        let file_name = format!("{}.md", sanitize_prompt_filename(&title));
+        let prompts_dir = agent_dir().join("prompts");
+        let file_path = prompts_dir.join(&file_name);
+
+        let bridge = cx.global::<AppStore>().pi_bridge.clone();
+        if bridge.is_none() {
+            self.error = Some("SDK bridge is not connected.".to_string());
+            cx.notify();
+            return;
+        }
+        let bridge = bridge.unwrap();
+
+        self.error = None;
+        cx.notify();
+
+        let title_for_notif = title.trim().to_string();
+        let view = cx.entity();
+        let skills_panel = self.skills_panel.clone();
+        let main_window = cx.global::<AppStore>().main_window;
+        let window_handle = window.window_handle();
+        cx.spawn(async move |_, cx| {
+            let result: Result<Vec<BridgePrompt>, String> = smol::unblock(move || {
+                std::fs::create_dir_all(&prompts_dir)
+                    .map_err(|e| format!("failed to create prompts directory: {}", e))?;
+                if file_path.exists() {
+                    return Err(format!(
+                        "A prompt named '{}' already exists.",
+                        file_name.strip_suffix(".md").unwrap_or(&file_name)
+                    ));
+                }
+                std::fs::write(&file_path, &body)
+                    .map_err(|e| format!("failed to write prompt file: {}", e))?;
+                bridge.get_prompts().map_err(|e| e.to_string())
+            })
+            .await;
+
+            match result {
+                Ok(prompts) => {
+                    let _ = skills_panel.update(cx, |panel, cx| {
+                        panel.prompts = prompts;
+                        panel.loading = false;
+                        cx.notify();
+                    });
+                    if let Some(main) = main_window {
+                        let _ = cx.update_window(main, |_, window, cx| {
+                            window.push_notification(
+                                Notification::success(format!(
+                                    "Prompt '{}' saved.",
+                                    title_for_notif
+                                )),
+                                cx,
+                            );
+                        });
+                    }
+                    let _ = window_handle.update(cx, |_, window, _cx| {
+                        window.remove_window();
+                    });
+                }
+                Err(e) => {
+                    let _ = view.update(cx, |this, cx| {
+                        this.error = Some(e);
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+}
+
+impl Render for CreatePromptWindow {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let error_msg = self.error.clone().map(SharedString::from);
+
+        div()
+            .id("create-prompt-window")
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(theme.background)
+            .text_color(theme.foreground)
+            .font_family(theme.font_family.clone())
+            .child(
+                TitleBar::new().child(
+                    div().flex().flex_row().items_center().px_2().child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("New Prompt"),
+                    ),
+                ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .p_4()
+                    .gap_4()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child("TITLE"),
+                            )
+                            .child(Input::new(&self.title_input).w_full()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .flex_1()
+                            .min_h(px(120.))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child("PROMPT"),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .child(Input::new(&self.body_input).w_full().h_full()),
+                            ),
+                    )
+                    .when_some(error_msg, |this, err| {
+                        this.child(div().text_xs().text_color(cx.theme().danger).child(err))
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Button::new("create-prompt-cancel")
+                                    .label("Cancel")
+                                    .with_size(Size::Small)
+                                    .ghost()
+                                    .on_click(cx.listener(|_this, _, window, _cx| {
+                                        window.remove_window();
+                                    })),
+                            )
+                            .child(
+                                Button::new("create-prompt-save")
+                                    .label("Save")
+                                    .with_size(Size::Small)
+                                    .primary()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.save(window, cx);
+                                    })),
+                            ),
+                    ),
+            )
+    }
+}
+
+fn open_create_prompt_window(cx: &mut App, skills_panel: gpui::Entity<SkillsPanel>) {
+    let width = px(520.0);
+    let height = px(420.0);
+    let bounds = Bounds::centered(None, size(width, height), cx);
+    let window_options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_min_size: Some(size(px(360.0), px(300.0))),
+        titlebar: Some(TitleBar::title_bar_options()),
+        window_decorations: if cfg!(target_os = "macos") {
+            None
+        } else {
+            Some(WindowDecorations::Client)
+        },
+        ..Default::default()
+    };
+
+    cx.open_window(window_options, |window, cx| {
+        let view = cx.new(|cx| CreatePromptWindow::new(window, cx, skills_panel.clone()));
+        cx.new(|cx| Root::new(view, window, cx))
+    })
+    .expect("failed to open the create prompt window");
 }
