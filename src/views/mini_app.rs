@@ -1,4 +1,7 @@
-use gpui::{Context, EventEmitter, FontWeight, IntoElement, Render, Window, WindowOptions, div, prelude::*, px, rgb, size};
+use gpui::{
+    Context, EventEmitter, FontWeight, IntoElement, Render, Window, WindowOptions, div, prelude::*,
+    px, rgb, size,
+};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::{ActiveTheme, Icon, Root, Sizable as _, Size, TitleBar};
 use gpui_wry::WebView;
@@ -218,7 +221,11 @@ async fn open_mini_app_webview(
             view.load_url(&url);
         });
 
-        let view = cx.new(|_cx| MiniAppWebView { webview, title, icon_path });
+        let view = cx.new(|_cx| MiniAppWebView {
+            webview,
+            title,
+            icon_path,
+        });
         cx.new(|cx| Root::new(view, window, cx))
     });
 }
@@ -236,27 +243,26 @@ impl Render for MiniAppWebView {
             .flex_col()
             .size_full()
             .child(
-                TitleBar::new()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .child(
-                                Icon::empty()
-                                    .path(&self.icon_path)
-                                    .with_size(Size::Small)
-                                    .text_color(cx.theme().primary),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().foreground)
-                                    .child(self.title),
-                            ),
-                    ),
+                TitleBar::new().child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_2()
+                        .child(
+                            Icon::empty()
+                                .path(&self.icon_path)
+                                .with_size(Size::Small)
+                                .text_color(cx.theme().primary),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().foreground)
+                                .child(self.title),
+                        ),
+                ),
             )
             .child(div().flex_1().child(self.webview.clone()))
     }

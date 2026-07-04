@@ -16,8 +16,8 @@ use crate::core::actions::{
     About, Login, OpenInstallExtensionWindow, OpenPiSettingsWindow, Quit, SelectFontLarge,
     SelectFontMedium, SelectFontSmall, ShowMainWindow, SignUp,
 };
-use crate::core::app::{AppStore, MainOverlay};
 use crate::core::app::apply_font_size;
+use crate::core::app::{AppStore, MainOverlay};
 use crate::core::assets::Assets;
 
 use crate::data::store::Store;
@@ -485,15 +485,13 @@ impl gpui::Render for MiniPiApp {
                     .flex_col()
                     .flex_1()
                     .overflow_hidden()
-                    .map(|this| {
-                        match main_overlay {
-                            MainOverlay::UserPanel => this.child(self.user_panel.clone()),
-                            MainOverlay::MiniApp => this.child(self.mini_app.clone()),
-                            MainOverlay::None => match MiniPiTab::from_index(active_tab_index) {
-                                MiniPiTab::Threads => this.child(self.thread_list.clone()),
-                                MiniPiTab::Skills => this.child(self.skills_panel.clone()),
-                            },
-                        }
+                    .map(|this| match main_overlay {
+                        MainOverlay::UserPanel => this.child(self.user_panel.clone()),
+                        MainOverlay::MiniApp => this.child(self.mini_app.clone()),
+                        MainOverlay::None => match MiniPiTab::from_index(active_tab_index) {
+                            MiniPiTab::Threads => this.child(self.thread_list.clone()),
+                            MiniPiTab::Skills => this.child(self.skills_panel.clone()),
+                        },
                     }),
             )
             .children(dialog_layer)

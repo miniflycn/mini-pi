@@ -1,13 +1,12 @@
 use gpui::{
-    Action, AppContext, BorrowAppContext, ClipboardItem, Context, EventEmitter, InteractiveElement,
-    IntoElement, ParentElement, Render, ScrollHandle, SharedString, StatefulInteractiveElement,
-    Styled, Window, div, prelude::FluentBuilder, px, rgb,
+    Action, Anchor, AppContext, BorrowAppContext, ClipboardItem, Context, EventEmitter,
+    InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px, rgb,
 };
 
 use crate::auth::state::{self, AuthState};
 use crate::auth::supabase;
 use crate::config::app_config::{DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, FontSizePreset};
-use crate::views::auth_dialog::{AuthDialogMode, AuthDialogView};
 use crate::core::actions::{About, OpenPiSettingsWindow};
 use crate::core::app::{AppStore, apply_font_size};
 use crate::remote::RemoteStatus;
@@ -15,7 +14,9 @@ use crate::remote::cloudflared;
 use crate::remote::controller::TunnelLog;
 use crate::remote::qr::qr_image_source;
 use crate::sync::settings_sync;
+use crate::views::auth_dialog::{AuthDialogMode, AuthDialogView};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::scroll::Scrollbar;
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
@@ -23,6 +24,7 @@ use gpui_component::switch::Switch;
 use gpui_component::theme::{Theme, ThemeRegistry};
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
+    popover::Popover,
 };
 
 #[derive(Clone)]
@@ -63,6 +65,8 @@ impl Render for StatusLogTooltip {
 pub struct UserPanel {
     pub cloudflared_dialog: Option<CloudflaredDialog>,
     pub font_size_dropdown: gpui::Entity<SelectState<SearchableVec<FontSizePreset>>>,
+    pub bearer_token_input: gpui::Entity<InputState>,
+    pub token_popover_open: bool,
     pub _remote_sub: Option<gpui::Subscription>,
     pub _font_size_dropdown_sub: gpui::Subscription,
     pub scroll_handle: ScrollHandle,
@@ -114,10 +118,14 @@ impl UserPanel {
                 }
             },
         );
+        let bearer_token_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Cloudflare bearer token"));
 
         Self {
             cloudflared_dialog: None,
             font_size_dropdown,
+            bearer_token_input,
+            token_popover_open: false,
             _remote_sub: remote_sub,
             _font_size_dropdown_sub,
             scroll_handle: ScrollHandle::new(),
@@ -138,12 +146,12 @@ impl UserPanel {
                             cx.update_global(|app: &mut AppStore, _| app.remote_controller.clone());
                         if let Some(controller) = controller {
                             let command = path.to_string_lossy().to_string();
-                            controller.update(cx, |c, cx| {
+                            controller.update(cx, |c, _cx| {
                                 c.config.cloudflared.command = command;
-                                c.set_enabled(true, cx);
                             });
                         }
                         this.cloudflared_dialog = None;
+                        this.enable_remote_control(cx);
                     }
                     Err(e) => {
                         this.cloudflared_dialog = Some(CloudflaredDialog::Error(e));
@@ -153,6 +161,45 @@ impl UserPanel {
             });
         })
         .detach();
+    }
+
+    /// Enables remote control if cloudflared is available.
+    /// Otherwise prompts to download/install it first.
+    /// Uses the current value of the bearer-token input (which may be empty).
+    fn enable_remote_control(&mut self, cx: &mut Context<Self>) {
+        eprintln!("[user_panel] enable_remote_control called");
+        let controller = match cx.global::<AppStore>().remote_controller.clone() {
+            Some(c) => c,
+            None => {
+                eprintln!("[user_panel] enable_remote_control: remote_controller is None");
+                return;
+            }
+        };
+
+        let command = controller.read(cx).config.cloudflared.command.clone();
+        eprintln!("[user_panel] enable_remote_control: command={}", command);
+        if let Err(e) = cloudflared::resolve_cloudflared_command(&command) {
+            eprintln!(
+                "[user_panel] enable_remote_control: cloudflared not resolved: {}",
+                e
+            );
+            self.cloudflared_dialog = Some(CloudflaredDialog::Prompt);
+            cx.notify();
+            return;
+        }
+
+        eprintln!("[user_panel] enable_remote_control: enabling with current token");
+        let token = self.bearer_token_input.read(cx).value().to_string();
+        controller.update(cx, |c, cx| {
+            if token.is_empty() {
+                c.config.cloudflared.bearer_token = None;
+            } else {
+                c.config.cloudflared.bearer_token = Some(token);
+            }
+            c.save_config(cx);
+            c.set_enabled(true, cx);
+        });
+        cx.notify();
     }
 }
 
@@ -328,7 +375,38 @@ fn render_cloudflared_dialog(
         )
 }
 
+fn render_token_popover(panel: &mut UserPanel, cx: &mut Context<UserPanel>) -> impl IntoElement {
+    let input = panel.bearer_token_input.clone();
+    div()
+        .id("remote-token-popover")
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .px_4()
+        .py_4()
+        .rounded_lg()
+        .bg(cx.theme().secondary)
+        .border_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .text_sm()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(cx.theme().foreground)
+                .child("Cloudflare bearer token"),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("Enter a Cloudflare API token for this tunnel session, or leave empty."),
+        )
+        .child(Input::new(&input).w_full())
+}
+
 fn render_remote_control_section(
+    panel: &mut UserPanel,
     _window: &mut Window,
     cx: &mut Context<UserPanel>,
 ) -> impl IntoElement {
@@ -394,6 +472,32 @@ fn render_remote_control_section(
                         .child("Enable remote control"),
                 )
                 .child(
+                    Popover::new("remote-token-popover")
+                        .open(panel.token_popover_open)
+                        .on_open_change(cx.listener(|this, open, _, cx| {
+                            this.token_popover_open = *open;
+                            cx.notify();
+                        }))
+                        .anchor(Anchor::TopCenter)
+                        .w(px(240.))
+                        .trigger(
+                            Button::new("remote-token-icon")
+                                .with_size(Size::Small)
+                                .ghost()
+                                .icon(
+                                    Icon::empty()
+                                        .path("icons/exclamation.svg")
+                                        .size(px(16.))
+                                        .text_color(if panel.token_popover_open {
+                                            cx.theme().primary
+                                        } else {
+                                            cx.theme().muted_foreground
+                                        }),
+                                ),
+                        )
+                        .child(render_token_popover(panel, cx)),
+                )
+                .child(
                     div()
                         .id("remote-toggle")
                         .w(px(44.))
@@ -418,18 +522,22 @@ fn render_remote_control_section(
                         )
                         .when(!is_busy, |s| {
                             s.on_click(cx.listener(move |this, _, _, cx| {
+                                eprintln!(
+                                    "[user_panel] remote toggle clicked, is_busy={}",
+                                    is_busy
+                                );
                                 if let Some(controller) =
                                     cx.global::<AppStore>().remote_controller.clone()
                                 {
                                     let enabled = controller.read(cx).is_enabled();
-                                    if !enabled
-                                        && !cloudflared::app_data_cloudflared_path().exists()
-                                    {
-                                        this.cloudflared_dialog = Some(CloudflaredDialog::Prompt);
-                                        cx.notify();
-                                        return;
+                                    eprintln!("[user_panel] current enabled={}", enabled);
+                                    if enabled {
+                                        controller.update(cx, |c, cx| c.set_enabled(false, cx));
+                                    } else {
+                                        this.enable_remote_control(cx);
                                     }
-                                    controller.update(cx, |c, cx| c.set_enabled(!enabled, cx));
+                                } else {
+                                    eprintln!("[user_panel] remote_controller is None");
                                 }
                             }))
                         }),
@@ -721,7 +829,7 @@ fn render_auth_content(
                         .child(sync_row("Agent Settings", &sync_label, cx))
                         .child(render_sync_button(cx)),
                 )
-                .child(render_remote_control_section(window, cx))
+                .child(render_remote_control_section(panel, window, cx))
                 .child(
                     div()
                         .w_full()
@@ -789,7 +897,7 @@ fn render_auth_content(
                     .text_color(cx.theme().muted_foreground)
                     .child("Sign in to sync your agent settings"),
             )
-            .child(render_remote_control_section(window, cx))
+            .child(render_remote_control_section(panel, window, cx))
             .child(
                 div()
                     .w_full()

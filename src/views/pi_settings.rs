@@ -619,10 +619,7 @@ impl Render for PiSettings {
         // Ensure every provider has an input field.
         for provider in &self.providers {
             if !self.provider_inputs.contains_key(&provider.id) {
-                let input = cx.new(|cx| {
-                    InputState::new(window, cx)
-                        .placeholder("API Key")
-                });
+                let input = cx.new(|cx| InputState::new(window, cx).placeholder("API Key"));
                 let _sub = cx.observe(&input, |_, _, cx| {
                     cx.notify();
                 });
@@ -823,11 +820,7 @@ fn render_api_keys_body(
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        .child(
-                            div()
-                                .flex_1()
-                                .child(Input::new(&input).w_full().max_w_80()),
-                        )
+                        .child(div().flex_1().child(Input::new(&input).w_full().max_w_80()))
                         .child(
                             Button::new(format!("save-provider-{}", provider_id_for_save))
                                 .label("Save")

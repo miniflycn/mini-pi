@@ -693,10 +693,11 @@ impl SessionHandle {
                                 Err(_) => break,
                             };
                             if let Some(tid) = thread_id {
-                                let has_open_window = cx.update_global(|app: &mut AppStore, _cx| {
-                                    app.set_thread_streaming(tid.clone(), is_streaming);
-                                    app.is_thread_window_open(&tid)
-                                });
+                                let has_open_window =
+                                    cx.update_global(|app: &mut AppStore, _cx| {
+                                        app.set_thread_streaming(tid.clone(), is_streaming);
+                                        app.is_thread_window_open(&tid)
+                                    });
                                 if new_activity && !has_open_window {
                                     let _ = weak.update(cx, |session, _cx| {
                                         session.mark_has_new_activity();

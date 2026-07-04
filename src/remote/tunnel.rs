@@ -8,6 +8,8 @@ use std::time::Duration;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+use crate::remote::cloudflared::CLOUDFLARE_API_TOKEN_VAR;
+
 const TRY_CLOUDFLARE_SUFFIX: &str = ".trycloudflare.com";
 pub const URL_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -55,6 +57,7 @@ pub fn start(
     command: &str,
     tunnel_token: Option<&str>,
     hostname: Option<&str>,
+    bearer_token: Option<&str>,
     local_port: u16,
 ) -> Result<(TunnelHandle, Receiver<TunnelOutcome>), String> {
     if tunnel_token.is_some() && hostname.is_none() {
@@ -79,6 +82,10 @@ pub fn start(
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    if let Some(token) = bearer_token {
+        cmd.env(CLOUDFLARE_API_TOKEN_VAR, token);
+    }
 
     match tunnel_token {
         Some(token) => {

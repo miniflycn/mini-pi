@@ -63,6 +63,7 @@ Example minimal config:
 | `remote_control.cloudflared.command` | string | `"cloudflared"` | Path or name of the `cloudflared` binary. |
 | `remote_control.cloudflared.tunnel_token` | string | `null` | Use a named Cloudflare tunnel instead of a quick tunnel. |
 | `remote_control.cloudflared.hostname` | string | `null` | Required when using a named tunnel token. |
+| `remote_control.cloudflared.bearer_token` | string | `null` | Optional Cloudflare API token passed as `CLOUDFLARE_API_TOKEN` to the cloudflared process. |
 
 ### Named tunnels
 
@@ -81,6 +82,10 @@ For a permanent hostname, set `tunnel_token` and `hostname`:
 ```
 
 When both are set, `cloudflared tunnel run --token <token>` is used and `hostname` is reported as the public URL.
+
+### In-app prompt
+
+When you enable remote control from the user settings panel and `remote_control.cloudflared.bearer_token` is not already set, the app shows a modal asking for a temporary Cloudflare API token. The entered token is saved to `config.json` and passed to the cloudflared process as `CLOUDFLARE_API_TOKEN`. You can also set it manually in `config.json` before enabling remote control.
 
 ---
 

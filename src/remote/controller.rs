@@ -13,6 +13,7 @@ use crate::core::app::AppStore;
 use crate::core::session_handle::{SessionEvent, SessionHandle, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{StoreError, ThreadMeta};
+use crate::remote::cloudflared;
 use crate::remote::server;
 use crate::remote::tunnel;
 use crate::remote::types::{AiStreamEvent, CommandEnvelope, RemoteCommand, RemoteResponse};
@@ -580,7 +581,7 @@ impl RemoteController {
         }
     }
 
-    fn save_config(&self, cx: &mut Context<Self>) {
+    pub fn save_config(&self, cx: &mut Context<Self>) {
         cx.update_global(|app: &mut AppStore, _| {
             app.config.remote_control = self.config.clone();
             if let Err(e) = app.config.save() {
@@ -626,6 +627,7 @@ impl RemoteController {
         let command_path = self.config.cloudflared.command.clone();
         let token = self.config.cloudflared.tunnel_token.clone();
         let hostname = self.config.cloudflared.hostname.clone();
+        let bearer_token = self.config.cloudflared.bearer_token.clone();
         let watchdog_attempts = self.restart_attempts;
 
         let watchdog_this = this.clone();
@@ -646,10 +648,12 @@ impl RemoteController {
 
         cx.spawn(async move |_, cx| {
             let start_result = smol::unblock(move || {
+                let command_path = cloudflared::resolve_cloudflared_command(&command_path)?;
                 tunnel::start(
                     &command_path,
                     token.as_deref(),
                     hostname.as_deref(),
+                    bearer_token.as_deref(),
                     bound_port,
                 )
             })

@@ -71,6 +71,8 @@ pub struct CloudflaredConfig {
     pub tunnel_token: Option<String>,
     #[serde(default)]
     pub hostname: Option<String>,
+    #[serde(default)]
+    pub bearer_token: Option<String>,
 }
 
 impl Default for CloudflaredConfig {
@@ -79,6 +81,7 @@ impl Default for CloudflaredConfig {
             command: default_cloudflared_command(),
             tunnel_token: None,
             hostname: None,
+            bearer_token: None,
         }
     }
 }
