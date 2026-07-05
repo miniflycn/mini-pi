@@ -9,6 +9,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::scroll::Scrollbar;
+use gpui_component::accordion::Accordion;
 use gpui_component::{Icon, Root, Sizable as _, Size, TitleBar, WindowExt as _};
 
 use crate::auth::state::agent_dir;
@@ -16,6 +17,7 @@ use crate::core::actions::OpenInstallExtensionWindow;
 use crate::core::app::AppStore;
 use crate::rpc::pi_rpc::{BridgeExtension, BridgePrompt, BridgeSkill};
 use crate::ui::loader::loader;
+use crate::views::install_skill::open_install_skill_window;
 
 type ResourceLoadResult =
     Result<(Vec<BridgeSkill>, Vec<BridgeExtension>, Vec<BridgePrompt>), String>;
@@ -23,13 +25,14 @@ type ResourceLoadResult =
 /// A panel that lists the effective skills, extensions, and prompts currently
 /// loaded by the pi-bridge runtime.
 pub struct SkillsPanel {
-    skills: Vec<BridgeSkill>,
-    extensions: Vec<BridgeExtension>,
-    prompts: Vec<BridgePrompt>,
-    loading: bool,
+    pub(crate) skills: Vec<BridgeSkill>,
+    pub(crate) extensions: Vec<BridgeExtension>,
+    pub(crate) prompts: Vec<BridgePrompt>,
+    pub(crate) loading: bool,
     loaded: bool,
-    error: Option<String>,
+    pub(crate) error: Option<String>,
     scroll_handle: ScrollHandle,
+    open_ixs: Vec<usize>,
 }
 
 impl SkillsPanel {
@@ -42,7 +45,13 @@ impl SkillsPanel {
             loaded: false,
             error: None,
             scroll_handle: ScrollHandle::new(),
+            open_ixs: vec![0, 1, 2],
         }
+    }
+
+    fn toggle_accordion(&mut self, open_ixs: Vec<usize>, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_ixs = open_ixs;
+        cx.notify();
     }
 
     pub fn load_if_needed(&mut self, cx: &mut Context<Self>) {
@@ -147,6 +156,22 @@ impl Render for SkillsPanel {
                     ),
             );
         } else {
+            let skills_panel = cx.entity();
+            let skills_panel_for_skill = skills_panel.clone();
+
+            let add_skill_button = Button::new("add-skill")
+                .with_size(Size::Small)
+                .ghost()
+                .icon(
+                    Icon::empty()
+                        .path("icons/plus.svg")
+                        .size(px(14.))
+                        .text_color(cx.theme().muted_foreground),
+                )
+                .on_click(cx.listener(move |_this, _, _window, cx| {
+                    open_install_skill_window(cx, skills_panel_for_skill.clone());
+                }));
+
             let add_extension_button = Button::new("add-extension")
                 .with_size(Size::Small)
                 .ghost()
@@ -160,7 +185,6 @@ impl Render for SkillsPanel {
                     window.dispatch_action(OpenInstallExtensionWindow.boxed_clone(), cx);
                 }));
 
-            let skills_panel = cx.entity();
             let add_prompt_button = Button::new("add-prompt")
                 .with_size(Size::Small)
                 .ghost()
@@ -174,67 +198,83 @@ impl Render for SkillsPanel {
                     open_create_prompt_window(cx, skills_panel.clone());
                 }));
 
-            content = content
-                .child(render_section(
-                    "Skills",
-                    self.skills
-                        .iter()
-                        .map(|s| {
-                            (
-                                SharedString::from(s.name.clone()),
-                                s.description.clone().map(SharedString::from),
-                                s.raw
-                                    .get("filePath")
-                                    .and_then(|v| v.as_str())
-                                    .map(SharedString::from),
-                            )
-                        })
-                        .collect(),
-                    div(),
-                    cx,
-                ))
-                .child(render_section(
-                    "Extensions",
-                    self.extensions
-                        .iter()
-                        .map(|e| {
-                            let basename = Path::new(&e.name)
-                                .file_name()
-                                .and_then(|f| f.to_str())
-                                .unwrap_or(&e.name)
-                                .to_string();
-                            (
-                                SharedString::from(basename),
-                                Some(SharedString::from(e.name.clone())),
-                                e.raw
-                                    .get("resolvedPath")
-                                    .and_then(|v| v.as_str())
-                                    .or_else(|| e.raw.get("path").and_then(|v| v.as_str()))
-                                    .map(SharedString::from),
-                            )
-                        })
-                        .collect(),
-                    add_extension_button,
-                    cx,
-                ))
-                .child(render_section(
-                    "Prompts",
-                    self.prompts
-                        .iter()
-                        .map(|p| {
-                            (
-                                SharedString::from(p.name.clone()),
-                                p.description.clone().map(SharedString::from),
-                                p.raw
-                                    .get("filePath")
-                                    .and_then(|v| v.as_str())
-                                    .map(SharedString::from),
-                            )
-                        })
-                        .collect(),
-                    add_prompt_button,
-                    cx,
-                ));
+            let skill_items: Vec<_> = self
+                .skills
+                .iter()
+                .map(|s| {
+                    (
+                        SharedString::from(s.name.clone()),
+                        s.description.clone().map(SharedString::from),
+                        s.raw
+                            .get("filePath")
+                            .and_then(|v| v.as_str())
+                            .map(SharedString::from),
+                    )
+                })
+                .collect();
+            let prompt_items: Vec<_> = self
+                .prompts
+                .iter()
+                .map(|p| {
+                    (
+                        SharedString::from(p.name.clone()),
+                        p.description.clone().map(SharedString::from),
+                        p.raw
+                            .get("filePath")
+                            .and_then(|v| v.as_str())
+                            .map(SharedString::from),
+                    )
+                })
+                .collect();
+            let extension_items: Vec<_> = self
+                .extensions
+                .iter()
+                .map(|e| {
+                    let basename = Path::new(&e.name)
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or(&e.name)
+                        .to_string();
+                    (
+                        SharedString::from(basename),
+                        Some(SharedString::from(e.name.clone())),
+                        e.raw
+                            .get("resolvedPath")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| e.raw.get("path").and_then(|v| v.as_str()))
+                            .map(SharedString::from),
+                    )
+                })
+                .collect();
+
+            content = content.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Accordion::new("skills-accordion")
+                            .multiple(true)
+                            .with_size(Size::Small)
+                            .item(|this| {
+                                this.open(self.open_ixs.contains(&0))
+                                    .title(section_title("Skills", add_skill_button, cx))
+                                    .child(render_resource_list("skills", skill_items, cx))
+                            })
+                            .item(|this| {
+                                this.open(self.open_ixs.contains(&1))
+                                    .title(section_title("Prompts", add_prompt_button, cx))
+                                    .child(render_resource_list("prompts", prompt_items, cx))
+                            })
+                            .item(|this| {
+                                this.open(self.open_ixs.contains(&2))
+                                    .title(section_title("Extensions", add_extension_button, cx))
+                                    .child(render_resource_list("extensions", extension_items, cx))
+                            })
+                            .on_toggle_click(cx.listener(|this, open_ixs: &[usize], window, cx| {
+                                this.toggle_accordion(open_ixs.to_vec(), window, cx);
+                            })),
+                    ),
+            );
         }
 
         div()
@@ -255,38 +295,38 @@ impl Render for SkillsPanel {
     }
 }
 
-fn render_section(
+fn section_title(
     title: &str,
-    items: Vec<(SharedString, Option<SharedString>, Option<SharedString>)>,
     right_child: impl IntoElement,
     cx: &mut gpui::Context<SkillsPanel>,
 ) -> impl IntoElement {
-    let title_string = SharedString::from(title);
-    let mut section = div()
-        .id(SharedString::from(format!(
-            "{}-section",
-            title.to_lowercase()
-        )))
+    div()
+        .px_2()
+        .py_1()
         .flex()
-        .flex_col()
-        .gap_2()
+        .flex_row()
+        .items_center()
+        .justify_between()
         .child(
             div()
-                .px_2()
-                .py_1()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child(title_string.clone()),
-                )
-                .child(right_child),
-        );
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child(SharedString::from(title)),
+        )
+        .child(right_child)
+}
+
+fn render_resource_list(
+    title: &str,
+    items: Vec<(SharedString, Option<SharedString>, Option<SharedString>)>,
+    cx: &mut gpui::Context<SkillsPanel>,
+) -> impl IntoElement {
+    let mut section = div()
+        .id(SharedString::from(format!("{}-section", title.to_lowercase())))
+        .flex()
+        .flex_col()
+        .gap_2();
 
     if items.is_empty() {
         section = section.child(

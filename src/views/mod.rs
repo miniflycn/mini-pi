@@ -4,6 +4,7 @@ pub mod chat_app;
 pub mod chat_window;
 pub mod create_thread_button;
 pub mod install_extension;
+pub mod install_skill;
 pub mod mini_app;
 pub mod onboarding;
 pub mod pi_settings;
