@@ -9,7 +9,9 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::notification::NotificationType;
 use gpui_component::pagination::Pagination;
 use gpui_component::scroll::Scrollbar;
-use gpui_component::{ActiveTheme, Disableable as _, Icon, Root, Sizable as _, Size, TitleBar, WindowExt as _};
+use gpui_component::{
+    ActiveTheme, Disableable as _, Icon, Root, Sizable as _, Size, TitleBar, WindowExt as _,
+};
 
 use crate::auth::state::{agent_dir, bun_cache_dir};
 use crate::utils::paths::find_bun;
@@ -356,77 +358,77 @@ impl Render for InstallExtensionWindow {
                             .map(|n| n == &pkg.name)
                             .unwrap_or(false);
 
-                    let card = div()
-                        .id(SharedString::from(format!("package-{}", pkg.name)))
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .px_4()
-                        .py_3()
-                        .rounded_lg()
-                        .bg(cx.theme().secondary)
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .flex_1()
-                                        .gap_1()
-                                        .min_w(px(0.))
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                .text_color(cx.theme().foreground)
-                                                .whitespace_normal()
-                                                .child(pkg.name.clone()),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .whitespace_normal()
-                                                .child(format!("v{}", pkg.version)),
-                                        )
-                                        .when_some(
-                                            pkg.description.clone().map(SharedString::from),
-                                            |this, desc| {
-                                                this.child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(cx.theme().muted_foreground)
-                                                        .whitespace_normal()
-                                                        .child(desc),
-                                                )
-                                            },
-                                        ),
-                                )
-                                .child(
-                                    Button::new(format!("install-{}", pkg.name))
-                                        .with_size(gpui_component::Size::Small)
-                                        .primary()
-                                        .icon(
-                                            Icon::empty()
-                                                .path("icons/download.svg")
-                                                .size(px(14.))
-                                                .text_color(cx.theme().primary_foreground),
-                                        )
-                                        .loading(is_installing)
-                                        .disabled(is_installing)
-                                        .tooltip("Install extension")
-                                        .on_click(cx.listener({
-                                            let name = pkg.name.clone();
-                                            move |this, _, window, cx| {
-                                                this.install(name.clone(), window, cx);
-                                            }
-                                        })),
-                                ),
-                        );
+                        let card = div()
+                            .id(SharedString::from(format!("package-{}", pkg.name)))
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .px_4()
+                            .py_3()
+                            .rounded_lg()
+                            .bg(cx.theme().secondary)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .flex_1()
+                                            .gap_1()
+                                            .min_w(px(0.))
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .text_color(cx.theme().foreground)
+                                                    .whitespace_normal()
+                                                    .child(pkg.name.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .whitespace_normal()
+                                                    .child(format!("v{}", pkg.version)),
+                                            )
+                                            .when_some(
+                                                pkg.description.clone().map(SharedString::from),
+                                                |this, desc| {
+                                                    this.child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .whitespace_normal()
+                                                            .child(desc),
+                                                    )
+                                                },
+                                            ),
+                                    )
+                                    .child(
+                                        Button::new(format!("install-{}", pkg.name))
+                                            .with_size(gpui_component::Size::Small)
+                                            .primary()
+                                            .icon(
+                                                Icon::empty()
+                                                    .path("icons/download.svg")
+                                                    .size(px(14.))
+                                                    .text_color(cx.theme().primary_foreground),
+                                            )
+                                            .loading(is_installing)
+                                            .disabled(is_installing)
+                                            .tooltip("Install extension")
+                                            .on_click(cx.listener({
+                                                let name = pkg.name.clone();
+                                                move |this, _, window, cx| {
+                                                    this.install(name.clone(), window, cx);
+                                                }
+                                            })),
+                                    ),
+                            );
 
                         card
                     }))
@@ -498,8 +500,7 @@ impl Render for InstallExtensionWindow {
             }
         }
 
-        body
-            .children(Root::render_dialog_layer(window, cx))
+        body.children(Root::render_dialog_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
             .children(Root::render_sheet_layer(window, cx))
     }
@@ -532,8 +533,8 @@ fn fetch_npm_packages(
     query: Option<String>,
     cursor: Option<String>,
 ) -> Result<(Vec<NpmPackage>, Option<String>), String> {
-    let mut url = url::Url::parse(SEARCH_URL_TEMPLATE)
-        .map_err(|e| format!("invalid search URL: {}", e))?;
+    let mut url =
+        url::Url::parse(SEARCH_URL_TEMPLATE).map_err(|e| format!("invalid search URL: {}", e))?;
     url.query_pairs_mut()
         .append_pair("text", query.as_deref().unwrap_or(DEFAULT_NPM_QUERY))
         .append_pair("size", &PAGE_SIZE.to_string());
@@ -557,9 +558,7 @@ fn fetch_npm_packages(
     let next_cursor = if objects.len() < PAGE_SIZE {
         None
     } else {
-        let from = cursor
-            .and_then(|c| c.parse::<usize>().ok())
-            .unwrap_or(0);
+        let from = cursor.and_then(|c| c.parse::<usize>().ok()).unwrap_or(0);
         let next_from = from + objects.len();
         if next_from >= total {
             None

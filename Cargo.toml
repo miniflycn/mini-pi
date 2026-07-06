@@ -42,9 +42,14 @@ wry = { version = "0.53.3", package = "lb-wry" }
 zip = "2"
 tar = "0.4"
 flate2 = "1"
+tray-icon = { version = "0.24", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.24", default-features = false, features = ["gtk", "libxdo"] }
+gtk = { version = "0.18", features = ["v3_24"] }
 
 [package.metadata.bundle]
 name = "Mini Pi"

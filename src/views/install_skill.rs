@@ -10,7 +10,9 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::notification::NotificationType;
 use gpui_component::pagination::Pagination;
 use gpui_component::scroll::Scrollbar;
-use gpui_component::{ActiveTheme, Disableable as _, Icon, Root, Sizable as _, Size, TitleBar, WindowExt as _};
+use gpui_component::{
+    ActiveTheme, Disableable as _, Icon, Root, Sizable as _, Size, TitleBar, WindowExt as _,
+};
 
 use crate::auth::state::agent_dir;
 use crate::core::app::AppStore;
@@ -490,21 +492,29 @@ impl Render for InstallSkillWindow {
                                                                     div()
                                                                         .text_xs()
                                                                         .text_color(
-                                                                            cx.theme().muted_foreground,
+                                                                            cx.theme()
+                                                                                .muted_foreground,
                                                                         )
                                                                         .whitespace_normal()
-                                                                        .child(format!("v{}", version)),
+                                                                        .child(format!(
+                                                                            "v{}",
+                                                                            version
+                                                                        )),
                                                                 )
                                                             },
                                                         )
                                                         .when_some(
-                                                            skill.summary.clone().map(SharedString::from),
+                                                            skill
+                                                                .summary
+                                                                .clone()
+                                                                .map(SharedString::from),
                                                             |this, summary| {
                                                                 this.child(
                                                                     div()
                                                                         .text_xs()
                                                                         .text_color(
-                                                                            cx.theme().muted_foreground,
+                                                                            cx.theme()
+                                                                                .muted_foreground,
                                                                         )
                                                                         .whitespace_normal()
                                                                         .child(summary),
@@ -520,7 +530,9 @@ impl Render for InstallSkillWindow {
                                                             Icon::empty()
                                                                 .path("icons/download.svg")
                                                                 .size(px(14.))
-                                                                .text_color(cx.theme().primary_foreground),
+                                                                .text_color(
+                                                                    cx.theme().primary_foreground,
+                                                                ),
                                                         )
                                                         .loading(is_installing)
                                                         .disabled(is_installing)
@@ -528,7 +540,11 @@ impl Render for InstallSkillWindow {
                                                         .on_click(cx.listener({
                                                             let skill = skill.clone();
                                                             move |this, _, window, cx| {
-                                                                this.install(skill.clone(), window, cx);
+                                                                this.install(
+                                                                    skill.clone(),
+                                                                    window,
+                                                                    cx,
+                                                                );
                                                             }
                                                         })),
                                                 ),
@@ -568,36 +584,35 @@ impl Render for InstallSkillWindow {
             );
 
             if self.total_pages() > 1 {
-            let entity = cx.entity();
-            body = body.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_center()
-                    .px_4()
-                    .py_2()
-                    .child(
-                        Pagination::new("install-skill-pagination")
-                            .current_page(self.current_page)
-                            .total_pages(self.total_pages())
-                            .with_size(Size::Small)
-                            .disabled(self.loading)
-                            .on_click({
-                                let entity = entity.clone();
-                                move |page, _, cx| {
-                                    entity.update(cx, |this, cx| {
-                                        this.go_to_page(*page, cx);
-                                    });
-                                }
-                            }),
-                    ),
-            );
-        }
+                let entity = cx.entity();
+                body = body.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_center()
+                        .px_4()
+                        .py_2()
+                        .child(
+                            Pagination::new("install-skill-pagination")
+                                .current_page(self.current_page)
+                                .total_pages(self.total_pages())
+                                .with_size(Size::Small)
+                                .disabled(self.loading)
+                                .on_click({
+                                    let entity = entity.clone();
+                                    move |page, _, cx| {
+                                        entity.update(cx, |this, cx| {
+                                            this.go_to_page(*page, cx);
+                                        });
+                                    }
+                                }),
+                        ),
+                );
+            }
         }
 
-        body
-            .children(Root::render_dialog_layer(window, cx))
+        body.children(Root::render_dialog_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
             .children(Root::render_sheet_layer(window, cx))
     }
@@ -626,7 +641,9 @@ pub fn open_install_skill_window(cx: &mut App, skills_panel: gpui::Entity<Skills
     .expect("failed to open the install skill window");
 }
 
-fn parse_clawhub_skill(obj: &serde_json::Map<String, serde_json::Value>) -> Result<ClawHubSkill, String> {
+fn parse_clawhub_skill(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Result<ClawHubSkill, String> {
     let name = obj
         .get("name")
         .or_else(|| obj.get("slug"))
@@ -638,7 +655,10 @@ fn parse_clawhub_skill(obj: &serde_json::Map<String, serde_json::Value>) -> Resu
         .and_then(|v| v.as_str())
         .unwrap_or(&name)
         .to_string();
-    let summary = obj.get("summary").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let summary = obj
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let owner_handle = obj
         .get("ownerHandle")
         .and_then(|v| v.as_str())
@@ -668,8 +688,7 @@ fn fetch_clawhub_skills(
         url::Url::parse(&format!("{}/api/v1/search", CLAWHUB_BASE))
             .map_err(|e| format!("invalid search URL: {}", e))?
     } else {
-        url::Url::parse(LIST_URL_TEMPLATE)
-            .map_err(|e| format!("invalid catalog URL: {}", e))?
+        url::Url::parse(LIST_URL_TEMPLATE).map_err(|e| format!("invalid catalog URL: {}", e))?
     };
 
     if is_search {
@@ -785,9 +804,7 @@ fn install_from_github_handoff(
 
 fn install_local_skill(src: &Path) -> Result<String, String> {
     if !src.join("SKILL.md").exists() {
-        return Err(
-            "Selected directory does not contain a SKILL.md file.".to_string(),
-        );
+        return Err("Selected directory does not contain a SKILL.md file.".to_string());
     }
 
     let dir_name = src
@@ -895,4 +912,3 @@ async fn refresh_skills_panel(panel: gpui::Entity<SkillsPanel>, cx: &mut AsyncAp
         });
     }
 }
-

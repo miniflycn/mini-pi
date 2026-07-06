@@ -14,12 +14,15 @@ ROOT = Path(__file__).resolve().parent.parent
 SVG_PATH = ROOT / "assets" / "icons" / "pi.svg"
 ICO_PATH = ROOT / "scripts" / "installer" / "app.ico"
 ICNS_PATH = ROOT / "scripts" / "installer" / "app.icns"
+TRAY_PATH = ROOT / "assets" / "icons" / "tray_icon.png"
+TRAY_SIZE = 64
 
 ICO_SIZES = [16, 32, 48, 64, 128, 256]
 ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
 
 ICON_GREEN = "#7fff6e"
 ICON_BACKGROUND = "#000000"
+TRAY_FOREGROUND = "#000000"
 
 # Apple ICNS type codes for PNG-encoded images.
 ICNS_TYPES = {
@@ -46,6 +49,22 @@ def apply_icon_theme(svg: bytes) -> bytes:
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">'
         f'<rect width="800" height="800" fill="{ICON_BACKGROUND}"/>'
         f'<g color="{ICON_GREEN}">{inner}</g>'
+        "</svg>"
+    )
+    return themed.encode("utf-8")
+
+
+def apply_tray_theme(svg: bytes) -> bytes:
+    """Render the source icon as a monochrome black shape on a transparent background.
+
+    macOS uses this as a template image so it adapts to the menu-bar theme.
+    """
+    text = svg.decode("utf-8")
+    match = re.search(r"<svg[^>]*>(.*)</svg>", text, re.DOTALL | re.IGNORECASE)
+    inner = match.group(1) if match else text
+    themed = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">'
+        f'<g color="{TRAY_FOREGROUND}">{inner}</g>'
         "</svg>"
     )
     return themed.encode("utf-8")
@@ -110,6 +129,10 @@ def main() -> None:
     themed = apply_icon_theme(svg)
     write_ico(themed, ICO_SIZES, ICO_PATH)
     write_icns(themed, ICNS_SIZES, ICNS_PATH)
+
+    tray_svg = apply_tray_theme(svg)
+    TRAY_PATH.write_bytes(render_png(tray_svg, TRAY_SIZE))
+    print(f"wrote {TRAY_PATH}")
 
 
 if __name__ == "__main__":

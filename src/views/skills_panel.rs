@@ -5,11 +5,11 @@ use gpui::{
     WindowBounds, WindowDecorations, WindowOptions, div, prelude::*, px, size,
 };
 use gpui_component::ActiveTheme;
+use gpui_component::accordion::Accordion;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::notification::Notification;
 use gpui_component::scroll::Scrollbar;
-use gpui_component::accordion::Accordion;
 use gpui_component::{Icon, Root, Sizable as _, Size, TitleBar, WindowExt as _};
 
 use crate::auth::state::agent_dir;
@@ -248,32 +248,29 @@ impl Render for SkillsPanel {
                 .collect();
 
             content = content.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        Accordion::new("skills-accordion")
-                            .multiple(true)
-                            .with_size(Size::Small)
-                            .item(|this| {
-                                this.open(self.open_ixs.contains(&0))
-                                    .title(section_title("Skills", add_skill_button, cx))
-                                    .child(render_resource_list("skills", skill_items, cx))
-                            })
-                            .item(|this| {
-                                this.open(self.open_ixs.contains(&1))
-                                    .title(section_title("Prompts", add_prompt_button, cx))
-                                    .child(render_resource_list("prompts", prompt_items, cx))
-                            })
-                            .item(|this| {
-                                this.open(self.open_ixs.contains(&2))
-                                    .title(section_title("Extensions", add_extension_button, cx))
-                                    .child(render_resource_list("extensions", extension_items, cx))
-                            })
-                            .on_toggle_click(cx.listener(|this, open_ixs: &[usize], window, cx| {
-                                this.toggle_accordion(open_ixs.to_vec(), window, cx);
-                            })),
-                    ),
+                div().flex().flex_col().child(
+                    Accordion::new("skills-accordion")
+                        .multiple(true)
+                        .with_size(Size::Small)
+                        .item(|this| {
+                            this.open(self.open_ixs.contains(&0))
+                                .title(section_title("Skills", add_skill_button, cx))
+                                .child(render_resource_list("skills", skill_items, cx))
+                        })
+                        .item(|this| {
+                            this.open(self.open_ixs.contains(&1))
+                                .title(section_title("Prompts", add_prompt_button, cx))
+                                .child(render_resource_list("prompts", prompt_items, cx))
+                        })
+                        .item(|this| {
+                            this.open(self.open_ixs.contains(&2))
+                                .title(section_title("Extensions", add_extension_button, cx))
+                                .child(render_resource_list("extensions", extension_items, cx))
+                        })
+                        .on_toggle_click(cx.listener(|this, open_ixs: &[usize], window, cx| {
+                            this.toggle_accordion(open_ixs.to_vec(), window, cx);
+                        })),
+                ),
             );
         }
 
@@ -323,7 +320,10 @@ fn render_resource_list(
     cx: &mut gpui::Context<SkillsPanel>,
 ) -> impl IntoElement {
     let mut section = div()
-        .id(SharedString::from(format!("{}-section", title.to_lowercase())))
+        .id(SharedString::from(format!(
+            "{}-section",
+            title.to_lowercase()
+        )))
         .flex()
         .flex_col()
         .gap_2();

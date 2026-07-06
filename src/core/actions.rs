@@ -13,6 +13,7 @@ actions!(
         CancelInlineEdit,
         StopStreaming,
         ShowMainWindow,
+        ToggleMainWindow,
         About,
         OpenInstallExtensionWindow,
         OpenPiSettingsWindow,

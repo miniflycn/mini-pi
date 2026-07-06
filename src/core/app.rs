@@ -18,6 +18,7 @@ use crate::remote::RemoteController;
 use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync::{SyncMeta, SyncStatus};
 use gpui_component::theme::Theme;
+use tray_icon::TrayIcon;
 
 /// Which overlay, if any, is currently shown in the main window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -45,6 +46,7 @@ pub struct AppStore {
     pub remote_controller: Option<Entity<RemoteController>>,
     pub models: Vec<ModelInfo>,
     pub commands: Vec<CommandItem>,
+    pub tray_icon: Option<TrayIcon>,
 }
 
 impl AppStore {
@@ -76,6 +78,7 @@ impl AppStore {
             remote_controller,
             models,
             commands,
+            tray_icon: None,
         }
     }
 

@@ -15,11 +15,12 @@ use crate::config::command_config;
 use crate::config::model_config;
 use crate::core::actions::{
     About, Login, OpenInstallExtensionWindow, OpenPiSettingsWindow, Quit, SelectFontLarge,
-    SelectFontMedium, SelectFontSmall, ShowMainWindow, SignUp,
+    SelectFontMedium, SelectFontSmall, ShowMainWindow, SignUp, ToggleMainWindow,
 };
 use crate::core::app::apply_font_size;
 use crate::core::app::{AppStore, MainOverlay};
 use crate::core::assets::Assets;
+use crate::core::tray::TrayManager;
 
 use crate::data::store::Store;
 use crate::remote::RemoteController;
@@ -191,6 +192,26 @@ pub fn run() {
                     open_main_window(cx);
                 }
             });
+            cx.on_action(|_: &ToggleMainWindow, cx: &mut App| {
+                let handle = cx.update_global::<AppStore, _>(|app, _| app.main_window);
+                match handle {
+                    Some(handle) => {
+                        let still_open = handle
+                            .update(cx, |_view, window, _app| {
+                                window.remove_window();
+                            })
+                            .is_ok();
+                        if still_open {
+                            cx.update_global(|app: &mut AppStore, _| {
+                                app.main_window = None;
+                            });
+                            return;
+                        }
+                        open_main_window(cx);
+                    }
+                    None => open_main_window(cx),
+                }
+            });
             cx.on_action(|_: &About, cx: &mut App| {
                 open_about_window(cx);
             });
@@ -268,14 +289,21 @@ pub fn run() {
 
             cx.set_menus(menus);
 
-            cx.on_window_closed(|cx: &mut App, _window_id| {
-                if !cfg!(target_os = "macos") && cx.windows().is_empty() {
-                    cx.quit();
-                }
+            cx.on_window_closed(|cx: &mut App, window_id| {
+                cx.update_global(|app: &mut AppStore, _| {
+                    if app
+                        .main_window
+                        .map(|h| h.window_id() == window_id)
+                        .unwrap_or(false)
+                    {
+                        app.main_window = None;
+                    }
+                });
             })
             .detach();
 
             open_main_window(cx);
+            TrayManager::init(cx);
             cx.activate(true);
         });
 }
