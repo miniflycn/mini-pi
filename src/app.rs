@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    App, Application, Bounds, KeyBinding, Menu, MenuItem, MouseButton, SharedString, Window,
-    WindowBounds, WindowDecorations, WindowOptions, prelude::*, px, size,
+    App, Application, Bounds, KeyBinding, Menu, MenuItem, MouseButton, QuitMode, SharedString,
+    Window, WindowBounds, WindowDecorations, WindowOptions, prelude::*, px, size,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::tab::{Tab, TabBar};
@@ -14,11 +14,11 @@ use crate::config::app_config::{AppConfig, DEFAULT_DARK_THEME, FontSizePreset};
 use crate::config::command_config;
 use crate::config::model_config;
 use crate::core::actions::{
-    About, Login, OpenInstallExtensionWindow, OpenPiSettingsWindow, Quit, SelectFontLarge,
-    SelectFontMedium, SelectFontSmall, ShowMainWindow, SignUp, ToggleMainWindow,
+    About, CreateThread, Login, OpenInstallExtensionWindow, OpenPiSettingsWindow, Quit,
+    SelectFontLarge, SelectFontMedium, SelectFontSmall, ShowMainWindow, SignUp, ToggleMainWindow,
 };
 use crate::core::app::apply_font_size;
-use crate::core::app::{AppStore, MainOverlay};
+use crate::core::app::{AppStore, MainOverlay, custom_window_options};
 use crate::core::assets::Assets;
 use crate::core::tray::TrayManager;
 
@@ -28,6 +28,7 @@ use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync;
 use crate::views::about::open_about_window;
 use crate::views::auth_dialog::{AuthDialogMode, AuthDialogView};
+use crate::views::chat_app::open_chat_window;
 use crate::views::install_extension::open_install_extension_window;
 use crate::views::mini_app::{MiniApp, MiniAppEvent};
 use crate::views::pi_settings::open_pi_settings_window;
@@ -88,6 +89,7 @@ pub fn run() {
 
     Application::with_platform(gpui_platform::current_platform(false))
         .with_assets(Assets { base: assets_dir })
+        .with_quit_mode(QuitMode::Explicit)
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
 
@@ -179,38 +181,39 @@ pub fn run() {
 
             cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
             cx.on_action(|_: &ShowMainWindow, cx: &mut App| {
-                let handle = cx.update_global::<AppStore, _>(|app, _| app.main_window);
-                let needs_new_window = match handle {
-                    Some(handle) => handle
-                        .update(cx, |_view, window, _app| {
-                            window.activate_window();
-                        })
-                        .is_err(),
-                    None => true,
-                };
-                if needs_new_window {
-                    open_main_window(cx);
-                }
+                open_main_window(cx);
             });
             cx.on_action(|_: &ToggleMainWindow, cx: &mut App| {
-                let handle = cx.update_global::<AppStore, _>(|app, _| app.main_window);
+                let (handle, hidden) =
+                    cx.update_global::<AppStore, _>(|app, _| (app.main_window, app.main_window_hidden));
                 match handle {
-                    Some(handle) => {
+                    Some(handle) if !hidden => {
                         let still_open = handle
                             .update(cx, |_view, window, _app| {
-                                window.remove_window();
+                                crate::utils::window_helpers::hide_window(window);
                             })
                             .is_ok();
                         if still_open {
                             cx.update_global(|app: &mut AppStore, _| {
-                                app.main_window = None;
+                                app.main_window_hidden = true;
                             });
-                            return;
                         }
-                        open_main_window(cx);
+                    }
+                    Some(handle) => {
+                        let _ = handle.update(cx, |_view, window, _app| {
+                            crate::utils::window_helpers::show_and_activate_window(window);
+                        });
+                        cx.update_global(|app: &mut AppStore, _| {
+                            app.main_window_hidden = false;
+                        });
                     }
                     None => open_main_window(cx),
                 }
+            });
+            cx.on_action(|_: &CreateThread, cx: &mut App| {
+                let store = cx.global::<AppStore>().store.clone();
+                let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
+                open_chat_window(cx, None, store, custom_window_options(Some(bounds)));
             });
             cx.on_action(|_: &About, cx: &mut App| {
                 open_about_window(cx);
@@ -297,6 +300,7 @@ pub fn run() {
                         .unwrap_or(false)
                     {
                         app.main_window = None;
+                        app.main_window_hidden = false;
                     }
                 });
             })
@@ -309,6 +313,17 @@ pub fn run() {
 }
 
 fn open_main_window(cx: &mut App) {
+    let existing = cx.update_global::<AppStore, _>(|app, _| app.main_window);
+    if let Some(handle) = existing {
+        let _ = handle.update(cx, |_view, window, _app| {
+            crate::utils::window_helpers::show_and_activate_window(window);
+        });
+        cx.update_global(|app: &mut AppStore, _| {
+            app.main_window_hidden = false;
+        });
+        return;
+    }
+
     let bounds = Bounds::centered(None, size(px(420.0), px(600.0)), cx);
     let window_options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -333,6 +348,7 @@ fn open_main_window(cx: &mut App) {
 
     cx.update_global::<AppStore, _>(|app, _| {
         app.main_window = Some(handle.into());
+        app.main_window_hidden = false;
     });
 }
 
@@ -565,7 +581,7 @@ impl MiniPiApp {
             )
             .on_click(cx.listener(|this, _, window, cx| {
                 this.pinned = !this.pinned;
-                crate::views::title_bar::set_window_level(window, this.pinned);
+                crate::utils::window_helpers::set_window_level(window, this.pinned);
                 cx.notify();
             }))
     }

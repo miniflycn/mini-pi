@@ -14,6 +14,7 @@ actions!(
         StopStreaming,
         ShowMainWindow,
         ToggleMainWindow,
+        CreateThread,
         About,
         OpenInstallExtensionWindow,
         OpenPiSettingsWindow,

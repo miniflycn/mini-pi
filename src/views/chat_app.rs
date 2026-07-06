@@ -265,7 +265,7 @@ impl ChatApp {
             )
             .on_click(cx.listener(|this, _, window, cx| {
                 this.pinned = !this.pinned;
-                crate::views::title_bar::set_window_level(window, this.pinned);
+                crate::utils::window_helpers::set_window_level(window, this.pinned);
                 cx.notify();
             }))
     }

@@ -8,7 +8,7 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuId, MenuItem},
 };
 
-use crate::core::actions::{Quit, ToggleMainWindow};
+use crate::core::actions::{CreateThread, Quit, ToggleMainWindow};
 use crate::core::app::AppStore;
 
 static MENU_IDS: OnceLock<TrayMenuIds> = OnceLock::new();
@@ -16,6 +16,7 @@ static MENU_IDS: OnceLock<TrayMenuIds> = OnceLock::new();
 #[derive(Debug, Clone)]
 pub struct TrayMenuIds {
     toggle: MenuId,
+    create: MenuId,
     quit: MenuId,
 }
 
@@ -80,16 +81,20 @@ impl TrayManager {
         let icon = load_tray_icon()?;
         let menu = Menu::new();
         let toggle_item = MenuItem::new("Show / Hide Mini Pi", true, None);
+        let create_item = MenuItem::new("Create Thread", true, None);
         let quit_item = MenuItem::new("Quit", true, None);
 
         let ids = TrayMenuIds {
             toggle: toggle_item.id().clone(),
+            create: create_item.id().clone(),
             quit: quit_item.id().clone(),
         };
         let _ = MENU_IDS.set(ids);
 
         menu.append(&toggle_item)
             .map_err(|e| format!("failed to append toggle menu item: {}", e))?;
+        menu.append(&create_item)
+            .map_err(|e| format!("failed to append create thread menu item: {}", e))?;
         menu.append(&quit_item)
             .map_err(|e| format!("failed to append quit menu item: {}", e))?;
 
@@ -126,6 +131,10 @@ impl TrayManager {
             if event.id == ids.toggle {
                 cx.update(|app| {
                     app.dispatch_action(&ToggleMainWindow);
+                });
+            } else if event.id == ids.create {
+                cx.update(|app| {
+                    app.dispatch_action(&CreateThread);
                 });
             } else if event.id == ids.quit {
                 cx.update(|app| {

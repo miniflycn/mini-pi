@@ -64,12 +64,12 @@ src/utils/
   file_scanner.rs       # Workspace file-tree scanner used by @ mention autocomplete
   format.rs             # Relative-time formatting and string truncation helpers
   llm.rs                # Cloudflare AI Gateway title generator
+  window_helpers.rs     # Platform-specific window-level helpers (pin-to-top, hide/show, activate)
 src/views/
   thread_list.rs        # Home window showing pinned/unpinned threads
   chat_app.rs           # Per-thread window frame: gpui_component TitleBar with pin/export/workspace controls, wraps ChatWindow in Root
   chat_window.rs        # Per-thread chat content: model dropdown, workspace bar, message rendering via TextView
   user_panel.rs         # Account/auth/settings panel, including theme toggle, remote-control toggle and QR code
-  title_bar.rs          # Platform-specific window-level helpers (pin-to-top) and the legacy custom title bar type
   workspace_manager.rs  # Workspace picker content rendered inside a gpui_component::Dialog
   reasoning.rs          # Collapsible thinking/reasoning display using gpui_component::Collapsible
   onboarding.rs         # First-run onboarding / import prompt from ~/.pi/agent/

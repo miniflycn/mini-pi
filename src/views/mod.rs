@@ -11,7 +11,6 @@ pub mod pi_settings;
 pub mod reasoning;
 pub mod skills_panel;
 pub mod thread_list;
-pub mod title_bar;
 pub mod tool_call;
 pub mod user_panel;
 pub mod workspace_filter;
