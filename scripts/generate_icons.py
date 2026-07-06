@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Windows .ico and macOS .icns icons from assets/icons/pi.svg.
+"""Generate Windows .ico, macOS .icns, and tray PNG icons from assets/icons/pi.svg.
 
 The original SVG is left untouched; this script wraps it with a black
 background and a green foreground colour before rendering the bitmaps.
@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SVG_PATH = ROOT / "assets" / "icons" / "pi.svg"
 ICO_PATH = ROOT / "scripts" / "installer" / "app.ico"
 ICNS_PATH = ROOT / "scripts" / "installer" / "app.icns"
+APP_ICON_PNG_PATH = ROOT / "assets" / "icons" / "app_icon.png"
+APP_ICON_PNG_SIZE = 256
 TRAY_PATH = ROOT / "assets" / "icons" / "tray_icon.png"
 TRAY_SIZE = 64
 
@@ -129,6 +131,9 @@ def main() -> None:
     themed = apply_icon_theme(svg)
     write_ico(themed, ICO_SIZES, ICO_PATH)
     write_icns(themed, ICNS_SIZES, ICNS_PATH)
+
+    APP_ICON_PNG_PATH.write_bytes(render_png(themed, APP_ICON_PNG_SIZE))
+    print(f"wrote {APP_ICON_PNG_PATH}")
 
     tray_svg = apply_tray_theme(svg)
     TRAY_PATH.write_bytes(render_png(tray_svg, TRAY_SIZE))

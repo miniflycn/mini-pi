@@ -104,9 +104,6 @@ impl TrayManager {
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false);
 
-        #[cfg(target_os = "macos")]
-        let builder = builder.with_icon_as_template(true);
-
         builder
             .build()
             .map_err(|e| format!("failed to build tray icon: {}", e))
@@ -149,7 +146,7 @@ fn load_tray_icon() -> Result<Icon, String> {
     let path = crate::utils::paths::app_root()
         .join("assets")
         .join("icons")
-        .join("tray_icon.png");
+        .join("app_icon.png");
 
     let image = image::open(&path)
         .map_err(|e| format!("failed to load tray icon at {:?}: {}", path, e))?
