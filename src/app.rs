@@ -184,8 +184,9 @@ pub fn run() {
                 open_main_window(cx);
             });
             cx.on_action(|_: &ToggleMainWindow, cx: &mut App| {
-                let (handle, hidden) =
-                    cx.update_global::<AppStore, _>(|app, _| (app.main_window, app.main_window_hidden));
+                let (handle, hidden) = cx.update_global::<AppStore, _>(|app, _| {
+                    (app.main_window, app.main_window_hidden)
+                });
                 match handle {
                     Some(handle) if !hidden => {
                         let still_open = handle
@@ -262,24 +263,16 @@ pub fn run() {
             cx.bind_keys(key_bindings);
 
             #[allow(unused_mut)]
-            let mut menus = vec![
-                Menu {
-                    name: "Mini Pi".into(),
-                    items: vec![
-                        MenuItem::action("About Mini Pi", About),
-                        MenuItem::separator(),
-                        MenuItem::action("Quit", Quit),
-                    ],
-                    disabled: false,
-                },
-                Menu {
-                    name: "Window".into(),
-                    items: vec![MenuItem::action("Show Main Window", ShowMainWindow)],
-                    disabled: false,
-                },
-            ];
+            let mut menus = vec![Menu {
+                name: "Mini Pi".into(),
+                items: vec![
+                    MenuItem::action("About Mini Pi", About),
+                    MenuItem::separator(),
+                    MenuItem::action("Quit", Quit),
+                ],
+                disabled: false,
+            }];
 
-            #[cfg(target_os = "macos")]
             menus.push(Menu {
                 name: "View".into(),
                 items: vec![
@@ -287,6 +280,12 @@ pub fn run() {
                     MenuItem::action("Medium Font", SelectFontMedium),
                     MenuItem::action("Large Font", SelectFontLarge),
                 ],
+                disabled: false,
+            });
+
+            menus.push(Menu {
+                name: "Window".into(),
+                items: vec![MenuItem::action("Show Main Window", ShowMainWindow)],
                 disabled: false,
             });
 

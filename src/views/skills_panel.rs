@@ -301,6 +301,7 @@ fn section_title(
         .px_2()
         .py_1()
         .flex()
+        .gap_1()
         .flex_row()
         .items_center()
         .justify_between()
