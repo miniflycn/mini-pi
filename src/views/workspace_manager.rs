@@ -16,15 +16,24 @@ pub enum WorkspaceManagerEvent {
 
 pub struct WorkspaceManager {
     workspaces: Vec<WorkspaceMeta>,
+    confirming_id: Option<String>,
 }
 
 impl WorkspaceManager {
     pub fn new(workspaces: Vec<WorkspaceMeta>) -> Self {
-        Self { workspaces }
+        Self {
+            workspaces,
+            confirming_id: None,
+        }
     }
 
     pub fn set_workspaces(&mut self, workspaces: Vec<WorkspaceMeta>) {
         self.workspaces = workspaces;
+        self.confirming_id = None;
+    }
+
+    pub fn set_confirming(&mut self, workspace_id: Option<String>) {
+        self.confirming_id = workspace_id;
     }
 
     pub fn render_dialog_content(
@@ -34,6 +43,7 @@ impl WorkspaceManager {
     ) -> impl IntoElement {
         let entity = cx.entity();
         let theme = cx.theme().clone();
+        let confirming_id = self.confirming_id.clone();
         let filtered: Vec<_> = self
             .workspaces
             .iter()
@@ -109,7 +119,7 @@ impl WorkspaceManager {
                 )
                 .children(filtered.into_iter().map(move |ws| {
                     let ws_id = ws.id.clone();
-                    let ws_id_for_delete = ws.id.clone();
+                    let is_confirming = confirming_id.as_ref() == Some(&ws_id);
                     div()
                         .id(SharedString::from(format!("ws-modal-{ws_id}")))
                         .flex()
@@ -140,15 +150,15 @@ impl WorkspaceManager {
                                         .child(ws.path.clone()),
                                 ),
                         )
-                        .child(
+                        .child(if !is_confirming {
                             Button::new(SharedString::from(format!("ws-delete-{ws_id}")))
                                 .with_size(Size::XSmall)
                                 .custom(
                                     ButtonCustomVariant::new(cx)
                                         .color(gpui::rgba(0x00000000).into())
                                         .foreground(theme_for_rows.muted_foreground.into())
-                                        .hover(theme_for_rows.secondary_hover.into())
-                                        .active(theme_for_rows.secondary_active.into()),
+                                        .hover(theme_for_rows.danger_hover.into())
+                                        .active(theme_for_rows.danger_active.into()),
                                 )
                                 .icon(
                                     Icon::empty()
@@ -158,16 +168,69 @@ impl WorkspaceManager {
                                 )
                                 .on_click({
                                     let entity = entity_for_rows.clone();
-                                    move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                        window.close_dialog(cx);
-                                        entity.update(cx, |_this, cx| {
-                                            cx.emit(WorkspaceManagerEvent::DeleteRequested {
-                                                workspace_id: ws_id_for_delete.clone(),
-                                            });
+                                    let ws_id = ws_id.clone();
+                                    move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
+                                        cx.stop_propagation();
+                                        entity.update(cx, |this, cx| {
+                                            this.confirming_id = Some(ws_id.clone());
+                                            cx.notify();
                                         });
                                     }
-                                }),
-                        )
+                                })
+                                .into_any_element()
+                        } else {
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme_for_rows.danger)
+                                        .child("Delete?"),
+                                )
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "ws-confirm-delete-{ws_id}"
+                                    )))
+                                    .label("Yes")
+                                    .with_size(Size::XSmall)
+                                    .danger()
+                                    .on_click({
+                                        let entity = entity_for_rows.clone();
+                                        let ws_id = ws_id.clone();
+                                        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                            cx.stop_propagation();
+                                            window.close_dialog(cx);
+                                            entity.update(cx, |this, cx| {
+                                                this.confirming_id = None;
+                                                cx.emit(WorkspaceManagerEvent::DeleteRequested {
+                                                    workspace_id: ws_id.clone(),
+                                                });
+                                            });
+                                        }
+                                    }),
+                                )
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "ws-cancel-delete-{ws_id}"
+                                    )))
+                                    .label("No")
+                                    .with_size(Size::XSmall)
+                                    .on_click({
+                                        let entity = entity_for_rows.clone();
+                                        move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
+                                            cx.stop_propagation();
+                                            entity.update(cx, |this, cx| {
+                                                this.confirming_id = None;
+                                                cx.notify();
+                                            });
+                                        }
+                                    }),
+                                )
+                                .into_any_element()
+                        })
                 }))
                 .into_any_element()
         }

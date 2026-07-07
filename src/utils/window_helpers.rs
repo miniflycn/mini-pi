@@ -115,8 +115,8 @@ fn hide_window_windows(window: &Window) {
 
 #[cfg(target_os = "macos")]
 fn hide_window_macos(window: &Window) {
-    use objc::{msg_send, sel, sel_impl};
     use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     if let Ok(handle) = HasWindowHandle::window_handle(window)
@@ -165,8 +165,8 @@ fn show_and_activate_window_windows(window: &Window) {
 
 #[cfg(target_os = "macos")]
 fn show_and_activate_window_macos(window: &Window) {
-    use objc::{msg_send, sel, sel_impl};
     use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     if let Ok(handle) = HasWindowHandle::window_handle(window)
