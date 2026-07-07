@@ -19,7 +19,7 @@ On first run, if `~/.pi/agent/` contains JSON files, the app offers to import th
 - **HTTP:** `reqwest` (blocking client for auth, sync, and title generation)
 - **Serialization:** `serde` / `serde_json`
 - **Markdown:** `gpui_component::text::TextView` / `TextViewState` (Markdown/HTMl rendering via gpui-component)
-- **Platform specifics:** `objc` on macOS for native window chrome; `raw-window-handle` for cross-platform window handles; Windows `CREATE_NO_WINDOW` flag
+- **Platform specifics:** `objc` on macOS for native window chrome; `raw-window-handle` for cross-platform window handles; Windows `CREATE_NO_WINDOW` flag and `windows_subsystem = "windows"` so the release binary does not open a console window
 
 ## Repository Layout
 
@@ -108,7 +108,7 @@ Both scripts download the platform-specific Bun runtime and bundle it alongside 
 
 - Release binaries resolve `assets/` and `pi-bridge/` relative to the executable (`src/utils/paths.rs`), falling back to `CARGO_MANIFEST_DIR` during `cargo run`.
 - macOS: `cargo-bundle` reads `[package.metadata.bundle]` in `Cargo.toml` and builds `Mini Pi.app` with resources under `Contents/Resources`.
-- Windows: a hand-written WiX source (`wix/main.wxs`) plus a `heat`-generated file list produces a per-machine `.msi`.
+- Windows: a hand-written WiX source (`wix/main.wxs`) plus a `heat`-generated file list produces a per-machine `.msi`. The installer creates both a Start Menu shortcut and a Desktop shortcut.
 
 ### Prerequisites
 
@@ -240,7 +240,7 @@ This application is a thin GUI wrapper around the `@earendil-works/pi-coding-age
 - When adding database changes, append a new migration tuple to `MIGRATIONS` in `src/data/store.rs`.
 - Assets are loaded at runtime via `core::assets::Assets`. The asset root is resolved from the executable path (`src/utils/paths::app_root`), so packaged releases keep `assets/` next to the binary (Windows) or inside `Mini Pi.app/Contents/Resources` (macOS). During development the helper falls back to `CARGO_MANIFEST_DIR`.
 - The `pi-bridge/` directory is resolved the same way. Release builds ship the platform-specific Bun binary (`bun` on macOS/Linux, `bun.exe` on Windows) plus a single bundled `pi-bridge.js` in the app root; during development the bridge is run with `bun run src/index.ts`.
-- The app is primarily developed and tested on macOS. Windows-specific and Linux-specific code exists (e.g. `CREATE_NO_WINDOW`, client-side titlebar controls, `wmctrl`) but may need verification.
+- The app is primarily developed and tested on macOS. Windows-specific and Linux-specific code exists (e.g. `CREATE_NO_WINDOW`, `windows_subsystem = "windows"`, client-side titlebar controls, `wmctrl`) but may need verification.
 - The `pi-bridge/` directory must have its dependencies installed with `bun install` before running the app outside an installer.
 - The wire protocol between Rust and the bridge uses a single WebSocket connection; every message includes a `sessionId` so multiple chat sessions can share one connection.
 - Model IDs in `src/config/model_config.rs` must resolve through the SDK's `ModelRegistry`/`getModel`. Provider names like `cloudflare-ai-gateway` may not be recognized by the SDK and may need to be mapped to SDK-supported providers (`anthropic`, `openai`, etc.).

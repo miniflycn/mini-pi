@@ -33,11 +33,13 @@
       <Directory Id="ProgramMenuFolder">
         <Directory Id="ApplicationProgramsFolder" Name="Mini Pi" />
       </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
     </Directory>
 
     <Feature Id="ProductFeature" Title="Mini Pi" Level="1">
       <ComponentGroupRef Id="ApplicationFiles" />
       <ComponentRef Id="ApplicationShortcut" />
+      <ComponentRef Id="ApplicationDesktopShortcut" />
     </Feature>
 
     <Component
@@ -62,6 +64,29 @@
         Root="HKCU"
         Key="Software\Earendil Works\Mini Pi"
         Name="installed"
+        Type="integer"
+        Value="1"
+        KeyPath="yes"
+      />
+    </Component>
+
+    <Component
+      Id="ApplicationDesktopShortcut"
+      Directory="DesktopFolder"
+      Guid="6a8f2b1c-7d3e-4c5a-9b0e-1f2a3c4d5e6f"
+    >
+      <Shortcut
+        Id="ApplicationDesktopShortcut"
+        Name="Mini Pi"
+        Description="A desktop chat interface for the pi coding agent"
+        Target="[INSTALLFOLDER]mini-pi.exe"
+        WorkingDirectory="INSTALLFOLDER"
+        Icon="AppIcon.ico"
+      />
+      <RegistryValue
+        Root="HKCU"
+        Key="Software\Earendil Works\Mini Pi"
+        Name="desktop_shortcut"
         Type="integer"
         Value="1"
         KeyPath="yes"
