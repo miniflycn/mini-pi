@@ -31,6 +31,7 @@ $bridgeStage = Join-Path $package "pi-bridge"
 New-Item -ItemType Directory -Force -Path $bridgeStage | Out-Null
 Copy-Item (Join-Path $root "pi-bridge\package.json") $bridgeStage
 Copy-Item (Join-Path $root "pi-bridge\tsconfig.json") $bridgeStage
+Copy-Item (Join-Path $root "pi-bridge\bun.lock") $bridgeStage
 Copy-Item -Recurse (Join-Path $root "pi-bridge\src") $bridgeStage
 
 $bunVersion = "1.2.22"
@@ -46,7 +47,7 @@ if (-not (Test-Path $bunExtract)) {
 }
 $bunExe = Join-Path $bunExtract "bun-windows-x64\bun.exe"
 
-Write-Host "Bundling pi-bridge with --target bun..."
+Write-Host "Preparing pi-bridge bundle..."
 Push-Location $bridgeStage
 
 $miniPiDir = Join-Path $env:USERPROFILE ".mini-pi"
@@ -55,6 +56,12 @@ New-Item -ItemType Directory -Force -Path (Join-Path $bunCacheDir "install-cache
 
 $env:BUN_INSTALL = $bunCacheDir
 $env:BUN_INSTALL_CACHE_DIR = Join-Path $bunCacheDir "install-cache"
+
+Write-Host "Installing pi-bridge dependencies..."
+& $bunExe install
+if ($LASTEXITCODE -ne 0) { throw "bun install failed" }
+
+Write-Host "Bundling pi-bridge with --target bun..."
 & $bunExe build --target bun src/index.ts --outfile pi-bridge.js
 if ($LASTEXITCODE -ne 0) { throw "bun build --target bun failed" }
 Pop-Location
