@@ -125,7 +125,7 @@ fn hide_window_macos(window: &Window) {
         let ns_view = appkit.ns_view.as_ptr() as *mut Object;
         unsafe {
             let ns_window: *mut Object = msg_send![ns_view, window];
-            let _: () = msg_send![ns_window, orderOut: nil];
+            let _: () = msg_send![ns_window, orderOut: std::ptr::null_mut::<Object>()];
         }
     }
 }
@@ -175,7 +175,7 @@ fn show_and_activate_window_macos(window: &Window) {
         let ns_view = appkit.ns_view.as_ptr() as *mut Object;
         unsafe {
             let ns_window: *mut Object = msg_send![ns_view, window];
-            let _: () = msg_send![ns_window, makeKeyAndOrderFront: nil];
+            let _: () = msg_send![ns_window, makeKeyAndOrderFront: std::ptr::null_mut::<Object>()];
         }
     }
     window.activate_window();

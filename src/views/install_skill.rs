@@ -355,7 +355,6 @@ impl Render for InstallSkillWindow {
             .size_full()
             .flex()
             .flex_col()
-            .gap_4()
             .bg(theme.background)
             .text_color(theme.foreground)
             .font_family(theme.font_family.clone());
@@ -371,7 +370,14 @@ impl Render for InstallSkillWindow {
             ),
         );
 
-        body = body.child(
+        let mut content = div()
+            .id("install-skill-content")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .gap_4();
+
+        content = content.child(
             div()
                 .flex()
                 .flex_row()
@@ -391,7 +397,7 @@ impl Render for InstallSkillWindow {
         );
 
         if let Some(ref err) = self.error {
-            body = body.child(
+            content = content.child(
                 div()
                     .flex()
                     .flex_col()
@@ -414,7 +420,7 @@ impl Render for InstallSkillWindow {
                     ),
             );
         } else if self.skills.is_empty() && !self.loading {
-            body = body.child(
+            content = content.child(
                 div()
                     .flex()
                     .flex_col()
@@ -428,7 +434,7 @@ impl Render for InstallSkillWindow {
         }
 
         if !self.skills.is_empty() || self.loading {
-            body = body.child(
+            content = content.child(
                 div()
                     .id("install-skill-list-container")
                     .relative()
@@ -585,7 +591,7 @@ impl Render for InstallSkillWindow {
 
             if self.total_pages() > 1 {
                 let entity = cx.entity();
-                body = body.child(
+                content = content.child(
                     div()
                         .flex()
                         .flex_row()
@@ -612,7 +618,8 @@ impl Render for InstallSkillWindow {
             }
         }
 
-        body.children(Root::render_dialog_layer(window, cx))
+        body.child(content)
+            .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
             .children(Root::render_sheet_layer(window, cx))
     }
