@@ -10,6 +10,7 @@ use raw_window_handle::HasWindowHandle;
 use wry::WebViewBuilder;
 
 use crate::auth::state::SupabaseSession;
+use crate::core::actions::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 use crate::core::app::AppStore;
 use crate::views::auth_dialog::{AuthDialogMode, AuthDialogView};
 
@@ -221,11 +222,7 @@ async fn open_mini_app_webview(
             view.load_url(&url);
         });
 
-        let view = cx.new(|_cx| MiniAppWebView {
-            webview,
-            title,
-            icon_path,
-        });
+        let view = cx.new(|cx| MiniAppWebView::new(webview, title, icon_path, cx));
         cx.new(|cx| Root::new(view, window, cx))
     });
 }
@@ -234,11 +231,82 @@ struct MiniAppWebView {
     webview: gpui::Entity<WebView>,
     title: &'static str,
     icon_path: String,
+    focus_handle: gpui::FocusHandle,
+}
+
+impl MiniAppWebView {
+    fn new(
+        webview: gpui::Entity<WebView>,
+        title: &'static str,
+        icon_path: String,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let focus_handle = cx.focus_handle();
+        Self {
+            webview,
+            title,
+            icon_path,
+            focus_handle,
+        }
+    }
+
+    fn dispatch_edit_command(&self, cx: &mut Context<Self>, command: &str) {
+        #[cfg(target_os = "macos")]
+        {
+            use objc::runtime::{Object, Sel};
+            use objc::Message;
+            use wry::WebViewExtMacOS;
+
+            self.webview.update(cx, |webview, _| {
+                let wkwebview = webview.raw().webview();
+                let raw: *mut Object = &*wkwebview as *const _ as *mut Object;
+                let raw_ref: &Object = unsafe { &*raw };
+                let sel = Sel::register(&format!("{}:", command));
+                let sender = std::ptr::null_mut::<Object>();
+                let _: Result<(), _> =
+                    unsafe { raw_ref.send_message(sel, (sender,)) };
+            });
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let script = match command {
+                "copy" => "document.execCommand('copy');",
+                "cut" => "document.execCommand('cut');",
+                "paste" => "document.execCommand('paste');",
+                "selectAll" => "document.execCommand('selectAll');",
+                "undo" => "document.execCommand('undo');",
+                "redo" => "document.execCommand('redo');",
+                _ => return,
+            };
+            let _ = self.webview.update(cx, |webview, _| {
+                webview.raw().evaluate_script(script)
+            });
+        }
+    }
 }
 
 impl Render for MiniAppWebView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, _: &Copy, _window, cx| {
+                this.dispatch_edit_command(cx, "copy");
+            }))
+            .on_action(cx.listener(|this, _: &Cut, _window, cx| {
+                this.dispatch_edit_command(cx, "cut");
+            }))
+            .on_action(cx.listener(|this, _: &Paste, _window, cx| {
+                this.dispatch_edit_command(cx, "paste");
+            }))
+            .on_action(cx.listener(|this, _: &SelectAll, _window, cx| {
+                this.dispatch_edit_command(cx, "selectAll");
+            }))
+            .on_action(cx.listener(|this, _: &Undo, _window, cx| {
+                this.dispatch_edit_command(cx, "undo");
+            }))
+            .on_action(cx.listener(|this, _: &Redo, _window, cx| {
+                this.dispatch_edit_command(cx, "redo");
+            }))
             .flex()
             .flex_col()
             .size_full()

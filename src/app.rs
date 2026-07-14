@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    App, Application, Bounds, KeyBinding, Menu, MenuItem, MouseButton, QuitMode, SharedString,
-    Window, WindowBounds, WindowDecorations, WindowOptions, prelude::*, px, size,
+    App, Application, Bounds, KeyBinding, Menu, MenuItem, MouseButton, OsAction, QuitMode,
+    SharedString, Window, WindowBounds, WindowDecorations, WindowOptions, prelude::*, px, size,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::tab::{Tab, TabBar};
@@ -14,8 +14,9 @@ use crate::config::app_config::{AppConfig, DEFAULT_DARK_THEME, FontSizePreset};
 use crate::config::command_config;
 use crate::config::model_config;
 use crate::core::actions::{
-    About, CreateThread, Login, OpenInstallExtensionWindow, OpenPiSettingsWindow, Quit,
-    SelectFontLarge, SelectFontMedium, SelectFontSmall, ShowMainWindow, SignUp, ToggleMainWindow,
+    About, Copy, CreateThread, Cut, Login, OpenInstallExtensionWindow, OpenPiSettingsWindow, Paste,
+    Quit, Redo, SelectAll, SelectFontLarge, SelectFontMedium, SelectFontSmall, ShowMainWindow, SignUp,
+    ToggleMainWindow, Undo,
 };
 use crate::core::app::apply_font_size;
 use crate::core::app::{AppStore, MainOverlay, custom_window_options};
@@ -252,6 +253,12 @@ pub fn run() {
                 KeyBinding::new("cmd-w", crate::core::actions::CloseWindow, None),
                 KeyBinding::new("cmd-q", Quit, None),
                 KeyBinding::new("enter", crate::core::actions::SendMessage, None),
+                KeyBinding::new("cmd-c", Copy, None),
+                KeyBinding::new("cmd-x", Cut, None),
+                KeyBinding::new("cmd-v", Paste, None),
+                KeyBinding::new("cmd-a", SelectAll, None),
+                KeyBinding::new("cmd-z", Undo, None),
+                KeyBinding::new("cmd-shift-z", Redo, None),
             ];
             if !cfg!(target_os = "macos") {
                 key_bindings.push(KeyBinding::new(
@@ -259,6 +266,12 @@ pub fn run() {
                     crate::core::actions::CloseWindow,
                     None,
                 ));
+                key_bindings.push(KeyBinding::new("ctrl-c", Copy, None));
+                key_bindings.push(KeyBinding::new("ctrl-x", Cut, None));
+                key_bindings.push(KeyBinding::new("ctrl-v", Paste, None));
+                key_bindings.push(KeyBinding::new("ctrl-a", SelectAll, None));
+                key_bindings.push(KeyBinding::new("ctrl-z", Undo, None));
+                key_bindings.push(KeyBinding::new("ctrl-shift-z", Redo, None));
             }
             cx.bind_keys(key_bindings);
 
@@ -272,6 +285,20 @@ pub fn run() {
                 ],
                 disabled: false,
             }];
+
+            menus.push(Menu {
+                name: "Edit".into(),
+                items: vec![
+                    MenuItem::os_action("Undo", Undo, OsAction::Undo),
+                    MenuItem::os_action("Redo", Redo, OsAction::Redo),
+                    MenuItem::separator(),
+                    MenuItem::os_action("Cut", Cut, OsAction::Cut),
+                    MenuItem::os_action("Copy", Copy, OsAction::Copy),
+                    MenuItem::os_action("Paste", Paste, OsAction::Paste),
+                    MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
+                ],
+                disabled: false,
+            });
 
             menus.push(Menu {
                 name: "View".into(),

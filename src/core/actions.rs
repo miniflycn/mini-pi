@@ -21,5 +21,11 @@ actions!(
         SelectFontSmall,
         SelectFontMedium,
         SelectFontLarge,
+        Copy,
+        Cut,
+        Paste,
+        SelectAll,
+        Undo,
+        Redo,
     ]
 );
