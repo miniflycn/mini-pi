@@ -90,6 +90,7 @@ function onSubmit() {
           :status="status"
           color="neutral"
           size="sm"
+          type="button"
           :disabled="submitDisabled"
           @stop="emit('stop')"
         />

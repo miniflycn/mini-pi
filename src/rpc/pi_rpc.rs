@@ -71,6 +71,7 @@ pub enum BridgeEvent {
         tool_name: String,
         output: String,
         is_error: bool,
+        details: Option<serde_json::Value>,
     },
     TurnStart,
     TurnEnd,
@@ -99,6 +100,7 @@ pub enum BridgeEvent {
 #[derive(Debug, Clone)]
 pub enum LoadedPart {
     Text { text: String },
+    Image { data: String, mime_type: String },
     Thinking { text: String },
     ToolCall { name: String, args: String },
     ToolResult { name: String, output: String },
@@ -109,6 +111,20 @@ pub struct LoadedMessage {
     pub id: Option<String>,
     pub role: String,
     pub parts: Vec<LoadedPart>,
+    pub error_message: Option<String>,
+    pub is_error: bool,
+}
+
+pub fn is_error_stop_reason(stop_reason: Option<&str>) -> bool {
+    matches!(stop_reason, Some("error") | Some("api_error"))
+}
+
+pub fn has_non_empty_error_message(error_message: Option<&str>) -> bool {
+    error_message.map_or(false, |e| !e.is_empty())
+}
+
+pub fn is_assistant_error(error_message: Option<&str>, stop_reason: Option<&str>) -> bool {
+    has_non_empty_error_message(error_message) || is_error_stop_reason(stop_reason)
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +143,42 @@ pub struct BridgeModel {
     pub id: String,
     pub name: String,
     pub thinking_level_map: Option<HashMap<String, Option<String>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BridgeSkill {
+    pub name: String,
+    pub description: Option<String>,
+    pub raw: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct BridgeExtension {
+    pub name: String,
+    pub description: Option<String>,
+    pub raw: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct BridgePrompt {
+    pub name: String,
+    pub description: Option<String>,
+    pub raw: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct BridgeProvider {
+    pub id: String,
+    pub name: String,
+    pub configured: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct BridgeSettings {
+    pub compaction_enabled: bool,
+    pub default_thinking_level: Option<String>,
+    pub default_model: Option<String>,
+    pub default_provider: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -158,18 +210,32 @@ impl Drop for PiBridge {
     }
 }
 
+/// Ensures a temporary session entry is removed from the bridge's session map
+/// even if the caller panics or the future is dropped early.
+struct SessionGuard {
+    sessions: Arc<Mutex<HashMap<String, futures::channel::mpsc::UnboundedSender<BridgeEvent>>>>,
+    session_id: String,
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.remove(&self.session_id);
+    }
+}
+
 impl PiBridge {
     pub fn spawn() -> Result<Arc<Self>, PiRpcError> {
-        let bridge_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pi-bridge");
-        let (program, args) = find_runtime(&bridge_dir)?;
+        let app_root = crate::utils::paths::app_root();
+        let (program, args, cwd) = find_runtime(&app_root)?;
 
         let agent_dir = dirs::home_dir()
             .map(|h| h.join(".mini-pi").join("agent"))
-            .unwrap_or_else(|| bridge_dir.join("agent"));
+            .unwrap_or_else(|| app_root.join("agent"));
 
         let mut cmd = Command::new(&program);
         cmd.args(&args)
-            .current_dir(&bridge_dir)
+            .current_dir(&cwd)
             .arg("--agent-dir")
             .arg(&agent_dir);
         cmd.stdin(Stdio::null())
@@ -328,6 +394,10 @@ impl PiBridge {
             let mut sessions = self.sessions.lock().unwrap();
             sessions.insert(session_id.clone(), tx);
         }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
 
         let req = serde_json::json!({
             "type": "get_models",
@@ -335,8 +405,6 @@ impl PiBridge {
             "id": request_id,
         });
         if let Err(e) = self.send_json(&req) {
-            let mut sessions = self.sessions.lock().unwrap();
-            sessions.remove(&session_id);
             return Err(e);
         }
 
@@ -364,11 +432,6 @@ impl PiBridge {
                 "bridge closed before get_models response".into(),
             ))
         });
-
-        {
-            let mut sessions = self.sessions.lock().unwrap();
-            sessions.remove(&session_id);
-        }
 
         let data = result?;
         let models_val = data
@@ -415,6 +478,513 @@ impl PiBridge {
             });
         }
         Ok(models)
+    }
+
+    pub fn get_skills(&self) -> Result<Vec<BridgeSkill>, PiRpcError> {
+        self.query_session_resource("get_skills", "skills", |data| {
+            let arr = data
+                .as_array()
+                .ok_or_else(|| PiRpcError::Skills("skills is not an array".into()))?;
+            let mut items = Vec::new();
+            for val in arr {
+                let obj = val.as_object();
+                let name = obj
+                    .and_then(|o| o.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unnamed")
+                    .to_string();
+                let description = obj
+                    .and_then(|o| o.get("description"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let raw = obj
+                    .and_then(|o| o.get("raw"))
+                    .cloned()
+                    .unwrap_or_else(|| val.clone());
+                items.push(BridgeSkill {
+                    name,
+                    description,
+                    raw,
+                });
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn get_extensions(&self) -> Result<Vec<BridgeExtension>, PiRpcError> {
+        self.query_session_resource("get_extensions", "extensions", |data| {
+            let arr = data
+                .as_array()
+                .ok_or_else(|| PiRpcError::Extensions("extensions is not an array".into()))?;
+            let mut items = Vec::new();
+            for val in arr {
+                let obj = val.as_object();
+                let name = obj
+                    .and_then(|o| o.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unnamed")
+                    .to_string();
+                let description = obj
+                    .and_then(|o| o.get("description"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let raw = obj
+                    .and_then(|o| o.get("raw"))
+                    .cloned()
+                    .unwrap_or_else(|| val.clone());
+                items.push(BridgeExtension {
+                    name,
+                    description,
+                    raw,
+                });
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn get_prompts(&self) -> Result<Vec<BridgePrompt>, PiRpcError> {
+        self.query_session_resource("get_prompts", "prompts", |data| {
+            let arr = data
+                .as_array()
+                .ok_or_else(|| PiRpcError::Prompts("prompts is not an array".into()))?;
+            let mut items = Vec::new();
+            for val in arr {
+                let obj = val.as_object();
+                let name = obj
+                    .and_then(|o| o.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unnamed")
+                    .to_string();
+                let description = obj
+                    .and_then(|o| o.get("description"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let raw = obj
+                    .and_then(|o| o.get("raw"))
+                    .cloned()
+                    .unwrap_or_else(|| val.clone());
+                items.push(BridgePrompt {
+                    name,
+                    description,
+                    raw,
+                });
+            }
+            Ok(items)
+        })
+    }
+
+    /// Query the bridge for the effective slash-command list.
+    ///
+    /// This sends a global `get_commands` request with a synthetic routing id.
+    /// The bridge uses a real session's loader when the id matches a live
+    /// session, otherwise it falls back to `DefaultResourceLoader` so the
+    /// command list is available before any chat session exists.
+    ///
+    /// The synthetic id uses a `__commands__` prefix that is reserved for this
+    /// internal routing path. Real session ids come from session file names and
+    /// should never collide with this prefix.
+    ///
+    /// Returns the full response `data` object (which contains a `commands`
+    /// array) so callers can parse it consistently with the per-session
+    /// `get_commands` response.
+    pub fn get_commands(&self) -> Result<serde_json::Value, PiRpcError> {
+        let session_id = format!("__commands__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let req = serde_json::json!({
+            "type": "get_commands",
+            "sessionId": session_id,
+            "id": &request_id,
+        });
+        if let Err(e) = self.send_json(&req) {
+            return Err(e);
+        }
+
+        let result = self.runtime.block_on(async {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command,
+                    success,
+                    data,
+                    error,
+                    request_id: resp_request_id,
+                    ..
+                } = event
+                {
+                    if command == "get_commands"
+                        && resp_request_id.as_deref() == Some(request_id.as_str())
+                    {
+                        if success {
+                            return Ok(
+                                data.unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
+                            );
+                        }
+                        return Err(PiRpcError::Bridge(
+                            error.unwrap_or_else(|| "get_commands failed".into()),
+                        ));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(
+                "bridge closed before get_commands response".into(),
+            ))
+        });
+
+        result
+    }
+
+    pub fn get_providers(&self) -> Result<Vec<BridgeProvider>, PiRpcError> {
+        let session_id = format!("__providers__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let req = serde_json::json!({
+            "type": "get_providers",
+            "sessionId": session_id,
+            "id": request_id,
+        });
+        if let Err(e) = self.send_json(&req) {
+            return Err(e);
+        }
+
+        let result = self.runtime.block_on(async {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command,
+                    success,
+                    data,
+                    error,
+                    ..
+                } = event
+                {
+                    if command == "get_providers" {
+                        if success {
+                            return Ok(data);
+                        }
+                        return Err(PiRpcError::Bridge(
+                            error.unwrap_or_else(|| "get_providers failed".into()),
+                        ));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(
+                "bridge closed before get_providers response".into(),
+            ))
+        });
+
+        let data = result?;
+        let providers_val = data
+            .and_then(|d| d.get("providers").cloned())
+            .ok_or_else(|| PiRpcError::Bridge("get_providers response missing providers".into()))?;
+        let arr = providers_val
+            .as_array()
+            .ok_or_else(|| PiRpcError::Bridge("get_providers providers is not an array".into()))?;
+
+        let mut providers = Vec::new();
+        for p in arr {
+            let id = p
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| PiRpcError::Bridge("provider missing id".into()))?;
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+            let configured = p
+                .get("configured")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            providers.push(BridgeProvider {
+                id: id.to_string(),
+                name: name.to_string(),
+                configured,
+            });
+        }
+        Ok(providers)
+    }
+
+    pub fn set_auth(&self, provider: &str, key: &str) -> Result<(), PiRpcError> {
+        let session_id = format!("__auth__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let req = serde_json::json!({
+            "type": "set_auth",
+            "sessionId": session_id,
+            "id": request_id,
+            "provider": provider,
+            "key": key,
+        });
+        if let Err(e) = self.send_json(&req) {
+            return Err(e);
+        }
+
+        self.runtime.block_on(async {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command,
+                    success,
+                    error,
+                    ..
+                } = event
+                {
+                    if command == "set_auth" {
+                        if success {
+                            return Ok(());
+                        }
+                        return Err(PiRpcError::Bridge(
+                            error.unwrap_or_else(|| "set_auth failed".into()),
+                        ));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(
+                "bridge closed before set_auth response".into(),
+            ))
+        })
+    }
+
+    pub fn get_settings(&self) -> Result<BridgeSettings, PiRpcError> {
+        let session_id = format!("__settings__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let req = serde_json::json!({
+            "type": "get_settings",
+            "sessionId": session_id,
+            "id": request_id,
+        });
+        if let Err(e) = self.send_json(&req) {
+            return Err(e);
+        }
+
+        let result = self.runtime.block_on(async {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command,
+                    success,
+                    data,
+                    error,
+                    ..
+                } = event
+                {
+                    if command == "get_settings" {
+                        if success {
+                            return Ok(data);
+                        }
+                        return Err(PiRpcError::Bridge(
+                            error.unwrap_or_else(|| "get_settings failed".into()),
+                        ));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(
+                "bridge closed before get_settings response".into(),
+            ))
+        });
+
+        let data = result?;
+        let data =
+            data.ok_or_else(|| PiRpcError::Bridge("get_settings response missing data".into()))?;
+
+        let compaction_enabled = data
+            .get("compactionEnabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let default_thinking_level = data
+            .get("defaultThinkingLevel")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let default_model = data
+            .get("defaultModel")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let default_provider = data
+            .get("defaultProvider")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        Ok(BridgeSettings {
+            compaction_enabled,
+            default_thinking_level,
+            default_model,
+            default_provider,
+        })
+    }
+
+    pub fn set_compaction_enabled(&self, enabled: bool) -> Result<(), PiRpcError> {
+        self.send_settings_command(
+            "set_compaction_enabled",
+            serde_json::json!({ "enabled": enabled }),
+        )
+    }
+
+    pub fn set_default_thinking_level(&self, level: &str) -> Result<(), PiRpcError> {
+        self.send_settings_command(
+            "set_default_thinking_level",
+            serde_json::json!({ "level": level }),
+        )
+    }
+
+    pub fn set_default_model(&self, model_id: &str) -> Result<(), PiRpcError> {
+        self.send_settings_command(
+            "set_default_model",
+            serde_json::json!({ "modelId": model_id }),
+        )
+    }
+
+    pub fn set_default_provider(&self, provider: &str) -> Result<(), PiRpcError> {
+        self.send_settings_command(
+            "set_default_provider",
+            serde_json::json!({ "provider": provider }),
+        )
+    }
+
+    fn send_settings_command(
+        &self,
+        command: &str,
+        payload: serde_json::Value,
+    ) -> Result<(), PiRpcError> {
+        let session_id = format!("__settings__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(session_id.clone(), tx);
+        }
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let mut req = serde_json::json!({
+            "type": command,
+            "sessionId": session_id,
+            "id": request_id,
+        });
+        if let Some(obj) = payload.as_object() {
+            for (key, value) in obj {
+                req[key] = value.clone();
+            }
+        }
+
+        if let Err(e) = self.send_json(&req) {
+            return Err(e);
+        }
+
+        self.runtime.block_on(async {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command: resp_command,
+                    success,
+                    error,
+                    ..
+                } = event
+                {
+                    if resp_command == command {
+                        if success {
+                            return Ok(());
+                        }
+                        return Err(PiRpcError::Bridge(
+                            error.unwrap_or_else(|| format!("{} failed", command)),
+                        ));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(format!(
+                "bridge closed before {} response",
+                command
+            )))
+        })
+    }
+
+    fn query_session_resource<T>(
+        &self,
+        command: &str,
+        data_key: &str,
+        parse: impl FnOnce(serde_json::Value) -> Result<T, PiRpcError>,
+    ) -> Result<T, PiRpcError> {
+        let session_id = format!("__resources__{}", Uuid::new_v4());
+        let request_id = Uuid::new_v4().to_string();
+
+        // Create a session so the bridge has a runtime with services.resourceLoader.
+        let mut rx = self.create_session(session_id.clone(), None, None, None, None)?;
+        let _guard = SessionGuard {
+            sessions: Arc::clone(&self.sessions),
+            session_id: session_id.clone(),
+        };
+
+        let req = serde_json::json!({
+            "type": command,
+            "id": request_id,
+        });
+        if let Err(e) = self.send(session_id.clone(), &req) {
+            return Err(e);
+        }
+
+        let result = self.runtime.block_on(async move {
+            while let Some(event) = rx.next().await {
+                if let BridgeEvent::Response {
+                    command: resp_command,
+                    success,
+                    data,
+                    error,
+                    ..
+                } = event
+                {
+                    if resp_command == command {
+                        if success {
+                            return Ok(data);
+                        }
+                        return Err(PiRpcError::Bridge(format!(
+                            "{} failed: {}",
+                            command,
+                            error.unwrap_or_else(|| "unknown error".into())
+                        )));
+                    }
+                }
+            }
+            Err(PiRpcError::WebSocket(format!(
+                "bridge closed before {} response",
+                command
+            )))
+        });
+
+        let data = result?;
+        let resource_val = data.and_then(|d| d.get(data_key).cloned()).ok_or_else(|| {
+            PiRpcError::Bridge(format!("{} response missing {}", command, data_key))
+        })?;
+        parse(resource_val)
     }
 
     pub fn send(&self, session_id: String, json: &serde_json::Value) -> Result<(), PiRpcError> {
@@ -467,7 +1037,7 @@ impl PiRpc {
     pub fn send_prompt_ext(
         &mut self,
         message: &str,
-        images: Option<&[ImageContent]>,
+        media: Option<&[ImageContent]>,
         streaming_behavior: Option<&str>,
         request_id: Option<&str>,
     ) -> Result<(), PiRpcError> {
@@ -476,7 +1046,7 @@ impl PiRpc {
             "message": message,
         });
         add_request_id(&mut cmd, request_id);
-        add_images(&mut cmd, images);
+        add_media(&mut cmd, media);
         if let Some(behavior) = streaming_behavior {
             cmd["streamingBehavior"] = serde_json::json!(behavior);
         }
@@ -486,7 +1056,7 @@ impl PiRpc {
     pub fn send_steer(
         &mut self,
         message: &str,
-        images: Option<&[ImageContent]>,
+        media: Option<&[ImageContent]>,
         request_id: Option<&str>,
     ) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({
@@ -494,14 +1064,14 @@ impl PiRpc {
             "message": message,
         });
         add_request_id(&mut cmd, request_id);
-        add_images(&mut cmd, images);
+        add_media(&mut cmd, media);
         self.send(&cmd)
     }
 
     pub fn send_follow_up(
         &mut self,
         message: &str,
-        images: Option<&[ImageContent]>,
+        media: Option<&[ImageContent]>,
         request_id: Option<&str>,
     ) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({
@@ -509,7 +1079,7 @@ impl PiRpc {
             "message": message,
         });
         add_request_id(&mut cmd, request_id);
-        add_images(&mut cmd, images);
+        add_media(&mut cmd, media);
         self.send(&cmd)
     }
 
@@ -550,6 +1120,12 @@ impl PiRpc {
 
     pub fn send_get_commands(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
         let mut cmd = serde_json::json!({ "type": "get_commands" });
+        add_request_id(&mut cmd, request_id);
+        self.send(&cmd)
+    }
+
+    pub fn send_get_session_stats(&mut self, request_id: Option<&str>) -> Result<(), PiRpcError> {
+        let mut cmd = serde_json::json!({ "type": "get_session_stats" });
         add_request_id(&mut cmd, request_id);
         self.send(&cmd)
     }
@@ -717,41 +1293,37 @@ impl PiRpc {
 // Bridge process helpers
 // ---------------------------------------------------------------------------
 
-fn find_runtime(bridge_dir: &PathBuf) -> Result<(String, Vec<String>), PiRpcError> {
-    // Prefer bun because it can run TypeScript directly.
-    if Command::new("bun").arg("--version").output().is_ok() {
-        return Ok((
-            "bun".to_string(),
-            vec!["run".to_string(), "src/index.ts".to_string()],
-        ));
-    }
-
-    // Use the local tsx binary if npm install was run.
-    #[cfg(windows)]
-    let tsx_names: [&str; 2] = ["tsx.cmd", "tsx"];
-    #[cfg(not(windows))]
-    let tsx_names: [&str; 1] = ["tsx"];
-
-    for name in tsx_names.iter() {
-        let tsx = bridge_dir.join("node_modules").join(".bin").join(name);
-        if tsx.exists() {
+fn find_runtime(app_root: &PathBuf) -> Result<(String, Vec<String>, PathBuf), PiRpcError> {
+    // Release builds ship a single bundled `pi-bridge.js` in the app root,
+    // produced by `bun build --target bun --outfile pi-bridge.js`. Run it
+    // directly; no `node_modules` or package manifests are needed.
+    let bundle = app_root.join("pi-bridge.js");
+    if bundle.exists() {
+        if let Some(bun) = crate::utils::paths::find_bun() {
             return Ok((
-                tsx.to_string_lossy().to_string(),
-                vec!["src/index.ts".to_string()],
+                bun.to_string_lossy().to_string(),
+                vec!["run".to_string(), bundle.to_string_lossy().to_string()],
+                app_root.clone(),
             ));
         }
     }
 
-    // Last resort: npx tsx (requires network if tsx is missing).
-    if Command::new("npx").arg("--version").output().is_ok() {
-        return Ok((
-            "npx".to_string(),
-            vec!["tsx".to_string(), "src/index.ts".to_string()],
-        ));
+    // Development fallback: run pi-bridge/src/index.ts with a system or bundled Bun.
+    let bridge_dir = app_root.join("pi-bridge");
+    let src_ts = bridge_dir.join("src").join("index.ts");
+    if src_ts.exists() {
+        if let Some(bun) = crate::utils::paths::find_bun() {
+            return Ok((
+                bun.to_string_lossy().to_string(),
+                vec!["run".to_string(), "src/index.ts".to_string()],
+                bridge_dir,
+            ));
+        }
     }
 
     Err(PiRpcError::Spawn(
-        "no JavaScript runtime found (tried bun, tsx, npx).".to_string(),
+        "no Bun runtime or pi-bridge bundle found (tried pi-bridge.js, pi-bridge/src/index.ts, system bun)."
+            .to_string(),
     ))
 }
 
@@ -762,7 +1334,9 @@ fn read_bridge_port(stdout: std::process::ChildStdout) -> Result<u16, PiRpcError
         if text.trim().is_empty() {
             continue;
         }
-        log!("bridge stdout: {}", &text[..text.len().min(200)]);
+        let preview_end = text.len().min(200);
+        let preview_end = text.floor_char_boundary(preview_end);
+        log!("bridge stdout: {}", &text[..preview_end]);
         if let Some(prefix) = text.strip_prefix("BRIDGE_PORT ") {
             return prefix
                 .trim()
@@ -785,21 +1359,21 @@ fn add_request_id(cmd: &mut serde_json::Value, request_id: Option<&str>) {
     }
 }
 
-fn add_images(cmd: &mut serde_json::Value, images: Option<&[ImageContent]>) {
-    if let Some(imgs) = images
-        && !imgs.is_empty()
+fn add_media(cmd: &mut serde_json::Value, media: Option<&[ImageContent]>) {
+    if let Some(items) = media
+        && !items.is_empty()
     {
-        let img_vals: Vec<serde_json::Value> = imgs
+        let vals: Vec<serde_json::Value> = items
             .iter()
-            .map(|img| {
+            .map(|item| {
                 serde_json::json!({
                     "type": "image",
-                    "data": img.data,
-                    "mimeType": img.mime_type,
+                    "data": item.data,
+                    "mimeType": item.mime_type,
                 })
             })
             .collect();
-        cmd["images"] = serde_json::json!(img_vals);
+        cmd["images"] = serde_json::json!(vals);
     }
 }
 
@@ -810,7 +1384,7 @@ fn parse_bridge_message(text: &str) -> Option<(String, BridgeEvent)> {
             log!(
                 "failed to parse JSON: {} (line: {})",
                 e,
-                &text[..text.len().min(100)]
+                truncate_str(text, 5000)
             );
             return None;
         }
@@ -839,7 +1413,7 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
     log!(
         "raw event type={}, data={}",
         event_type,
-        truncate_str(&serde_json::to_string(val).unwrap_or_default(), 200)
+        truncate_str(&serde_json::to_string(val).unwrap_or_default(), 5000)
     );
 
     match event_type {
@@ -979,6 +1553,7 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
                 .unwrap_or("unknown")
                 .to_string();
             let mut output = String::new();
+            let details = val.get("result").and_then(|r| r.get("details")).cloned();
             if let Some(result) = val.get("result")
                 && let Some(content) = result.get("content")
             {
@@ -991,8 +1566,9 @@ fn parse_pi_line_value(val: &serde_json::Value) -> Option<BridgeEvent> {
             Some(BridgeEvent::ToolEnd {
                 call_id,
                 tool_name,
-                output: truncate_str(&output, 500),
+                output: truncate_str(&output, 5000),
                 is_error,
+                details,
             })
         }
 
@@ -1111,9 +1687,21 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
             "user" => {
                 let content = msg.get("content");
                 let mut text = String::new();
+                let mut parts: Vec<LoadedPart> = vec![];
                 if let Some(arr) = content.and_then(|c| c.as_array()) {
                     for block in arr {
-                        if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                        let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        if block_type == "image" {
+                            if let (Some(data), Some(mime_type)) = (
+                                block.get("data").and_then(|d| d.as_str()),
+                                block.get("mimeType").and_then(|m| m.as_str()),
+                            ) {
+                                parts.push(LoadedPart::Image {
+                                    data: data.to_string(),
+                                    mime_type: mime_type.to_string(),
+                                });
+                            }
+                        } else if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
                             if !text.is_empty() {
                                 text.push('\n');
                             }
@@ -1123,10 +1711,15 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                 } else if let Some(s) = content.and_then(|c| c.as_str()) {
                     text = s.to_string();
                 }
+                if !text.is_empty() {
+                    parts.insert(0, LoadedPart::Text { text });
+                }
                 loaded.push(LoadedMessage {
                     id,
                     role: "user".to_string(),
-                    parts: vec![LoadedPart::Text { text }],
+                    parts,
+                    error_message: None,
+                    is_error: false,
                 });
             }
             "assistant" => {
@@ -1161,7 +1754,7 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                                     .unwrap_or_default();
                                 parts.push(LoadedPart::ToolCall {
                                     name: name.to_string(),
-                                    args: truncate_str(&args_str, 200),
+                                    args: truncate_str(&args_str, 5000),
                                 });
                             }
                             _ => {}
@@ -1172,11 +1765,39 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                         text: content_str.to_string(),
                     });
                 }
+
+                let error_message = msg
+                    .get("errorMessage")
+                    .and_then(|e| e.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+                let stop_reason = msg.get("stopReason").and_then(|s| s.as_str());
+                let is_error = is_assistant_error(error_message.as_deref(), stop_reason);
+                let has_visible_content = parts.iter().any(|p| match p {
+                    LoadedPart::Text { text } | LoadedPart::Thinking { text } => !text.is_empty(),
+                    LoadedPart::Image { .. } => true,
+                    LoadedPart::ToolCall { args, .. } => !args.is_empty(),
+                    LoadedPart::ToolResult { output, .. } => !output.is_empty(),
+                });
+                if is_error && !has_visible_content {
+                    if let Some(ref error) = error_message {
+                        parts = vec![LoadedPart::Text {
+                            text: format!("Error: {}", error),
+                        }];
+                    } else {
+                        parts.push(LoadedPart::Text {
+                            text: "Error: assistant response failed.".to_string(),
+                        });
+                    }
+                }
+
                 if !parts.is_empty() {
                     loaded.push(LoadedMessage {
                         id,
                         role: "assistant".to_string(),
                         parts,
+                        error_message,
+                        is_error,
                     });
                 }
             }
@@ -1194,8 +1815,10 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                     role: "tool".to_string(),
                     parts: vec![LoadedPart::ToolResult {
                         name: tool_name.to_string(),
-                        output: format!("{}: {}", tool_name, truncate_str(&output, 500)),
+                        output: truncate_str(&output, 5000),
                     }],
+                    error_message: None,
+                    is_error: false,
                 });
             }
             "bashExecution" => {
@@ -1214,9 +1837,11 @@ pub fn parse_loaded_messages(messages_val: &serde_json::Value) -> Option<Vec<Loa
                             "`{}` (exit {})\n{}",
                             command,
                             exit_code,
-                            truncate_str(output, 500)
+                            truncate_str(output, 5000)
                         ),
                     }],
+                    error_message: None,
+                    is_error: false,
                 });
             }
             _ => {
@@ -1251,6 +1876,10 @@ pub enum PiRpcError {
     WebSocket(String),
     Runtime(String),
     Models(String),
+    Skills(String),
+    Extensions(String),
+    Prompts(String),
+    Bridge(String),
 }
 
 impl std::fmt::Display for PiRpcError {
@@ -1263,6 +1892,10 @@ impl std::fmt::Display for PiRpcError {
             PiRpcError::WebSocket(msg) => write!(f, "websocket error: {}", msg),
             PiRpcError::Runtime(msg) => write!(f, "runtime error: {}", msg),
             PiRpcError::Models(msg) => write!(f, "models error: {}", msg),
+            PiRpcError::Skills(msg) => write!(f, "skills error: {}", msg),
+            PiRpcError::Extensions(msg) => write!(f, "extensions error: {}", msg),
+            PiRpcError::Prompts(msg) => write!(f, "prompts error: {}", msg),
+            PiRpcError::Bridge(msg) => write!(f, "bridge error: {}", msg),
         }
     }
 }
@@ -1345,6 +1978,190 @@ mod tests {
                 );
             }
             other => panic!("expected AgentEnd with messages, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_loaded_messages_with_error_message() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "" }],
+                "stopReason": "error",
+                "errorMessage": "Failed to resolve API key"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "assistant");
+        assert!(messages[0].is_error);
+        assert_eq!(
+            messages[0].error_message.as_deref(),
+            Some("Failed to resolve API key")
+        );
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "Error: Failed to resolve API key"),
+            "expected error text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_with_error_stop_reason_no_message() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [],
+                "stopReason": "error"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_error);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "Error: assistant response failed."),
+            "expected fallback error text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_with_api_error_stop_reason() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [],
+                "stopReason": "api_error"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_error);
+        assert_eq!(messages[0].error_message, None);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "Error: assistant response failed."),
+            "expected fallback error text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_ignores_empty_error_message() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "hello" }],
+                "errorMessage": ""
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(!messages[0].is_error);
+        assert_eq!(messages[0].error_message, None);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "hello"),
+            "expected original text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_preserves_error_with_visible_content() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "partial" }],
+                "stopReason": "error",
+                "errorMessage": "Something went wrong"
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].is_error);
+        assert_eq!(
+            messages[0].error_message.as_deref(),
+            Some("Something went wrong")
+        );
+        // Visible content is preserved; error_message is surfaced separately.
+        assert_eq!(messages[0].parts.len(), 1);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "partial"),
+            "expected original text part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_loaded_messages_preserves_user_images() {
+        let val = serde_json::json!([
+            {
+                "id": "msg-1",
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "describe this" },
+                    { "type": "image", "data": "base64data", "mimeType": "image/png" }
+                ]
+            }
+        ]);
+        let messages = parse_loaded_messages(&val).expect("should parse");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].parts.len(), 2);
+        assert!(
+            matches!(&messages[0].parts[0], LoadedPart::Text { text } if text == "describe this"),
+            "expected text part, got {:?}",
+            messages[0].parts
+        );
+        assert!(
+            matches!(
+                &messages[0].parts[1],
+                LoadedPart::Image { data, mime_type }
+                if data == "base64data" && mime_type == "image/png"
+            ),
+            "expected image part, got {:?}",
+            messages[0].parts
+        );
+    }
+
+    #[test]
+    fn parse_tool_execution_end_with_details() {
+        let val = serde_json::json!({
+            "type": "tool_execution_end",
+            "toolCallId": "call-1",
+            "toolName": "send_file",
+            "result": {
+                "content": [{ "type": "text", "text": "Sent file: report.txt" }],
+                "details": {
+                    "path": "/workspace/report.txt",
+                    "mime_type": "text/plain",
+                    "size": 42
+                }
+            },
+            "isError": false
+        });
+        match parse_pi_line_value(&val) {
+            Some(BridgeEvent::ToolEnd {
+                call_id,
+                tool_name,
+                output,
+                is_error,
+                details,
+            }) => {
+                assert_eq!(call_id, "call-1");
+                assert_eq!(tool_name, "send_file");
+                assert!(!is_error);
+                assert!(output.contains("Sent file"));
+                let details = details.expect("details should be present");
+                assert_eq!(details["path"], "/workspace/report.txt");
+                assert_eq!(details["mime_type"], "text/plain");
+                assert_eq!(details["size"], 42);
+            }
+            other => panic!("expected ToolEnd with details, got {:?}", other),
         }
     }
 }

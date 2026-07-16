@@ -49,6 +49,10 @@ pub enum RemoteCommand {
         thread_id: String,
         workspace_id: String,
     },
+    DownloadFile {
+        path: String,
+        mime_type: Option<String>,
+    },
 }
 
 /// JSON response returned for ordinary (non-SSE) requests.
@@ -115,6 +119,12 @@ pub struct SetWorkspaceBody {
 pub struct CreateThreadBody {
     pub workspace_id: Option<String>,
     pub model_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DownloadFileBody {
+    pub path: String,
+    pub mime_type: Option<String>,
 }
 
 #[cfg(test)]

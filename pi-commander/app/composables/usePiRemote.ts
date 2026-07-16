@@ -9,6 +9,7 @@ export interface PiPart {
   name?: string
   args?: string
   output?: string
+  details?: Record<string, unknown>
 }
 
 export interface PiMessage {
@@ -119,7 +120,7 @@ export function usePiRemote() {
     return data as PiThreadListResponse
   }
 
-  async function createThread(modelId?: string, workspaceId?: string): Promise<{ thread_id: string }> {
+  async function createThread(modelId?: string, workspaceId?: string, signal?: AbortSignal): Promise<{ thread_id: string }> {
     const body: Record<string, unknown> = {}
     if (modelId) body.model_id = modelId
     if (workspaceId !== undefined) body.workspace_id = workspaceId
@@ -127,7 +128,8 @@ export function usePiRemote() {
     const res = await fetch(url('/threads'), {
       method: 'POST',
       headers: headers(),
-      body: Object.keys(body).length ? JSON.stringify(body) : undefined
+      body: Object.keys(body).length ? JSON.stringify(body) : undefined,
+      signal
     })
     const data = await res.json()
     if (!res.ok) throw toPiError(data)
@@ -201,11 +203,12 @@ export function usePiRemote() {
     return data as { status: string }
   }
 
-  async function setThinkingLevel(id: string, thinkingLevel: string): Promise<{ status: string }> {
+  async function setThinkingLevel(id: string, thinkingLevel: string, signal?: AbortSignal): Promise<{ status: string }> {
     const res = await fetch(url(`/threads/${id}/thinking-level`), {
       method: 'POST',
       headers: headers(),
-      body: JSON.stringify({ thinking_level: thinkingLevel })
+      body: JSON.stringify({ thinking_level: thinkingLevel }),
+      signal
     })
     const data = await res.json()
     if (!res.ok) throw toPiError(data)
@@ -226,6 +229,22 @@ export function usePiRemote() {
     return (data.workspaces ?? []) as PiWorkspace[]
   }
 
+  async function downloadFile(path: string, mimeType?: string): Promise<Blob> {
+    const body: Record<string, unknown> = { path }
+    if (mimeType) body.mime_type = mimeType
+
+    const res = await fetch(url('/files/download'), {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify(body)
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => undefined)
+      throw toPiError(data)
+    }
+    return res.blob()
+  }
+
   return {
     status,
     listThreads,
@@ -237,6 +256,7 @@ export function usePiRemote() {
     setModel,
     setThinkingLevel,
     listModels,
-    listWorkspaces
+    listWorkspaces,
+    downloadFile
   }
 }

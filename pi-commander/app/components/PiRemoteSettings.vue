@@ -1,4 +1,6 @@
 <script setup lang="ts">
+const QrScanner = defineAsyncComponent(() => import('~/components/QrScanner.vue'))
+
 const props = defineProps<{
   blocking?: boolean
 }>()
@@ -8,13 +10,11 @@ const emit = defineEmits<{ close: [boolean] }>()
 const isBlocking = computed(() => props.blocking ?? false)
 
 const config = usePiRemoteConfig()
-const openAI = useOpenAIKey()
 const remote = usePiRemote()
 const toast = useToast()
 
 const baseUrl = ref(config.baseUrl.value)
 const token = ref(config.token.value)
-const openAIKey = ref(openAI.apiKey.value)
 const testing = ref(false)
 const scanning = ref(false)
 const scanError = ref('')
@@ -49,7 +49,6 @@ async function checkConnection(): Promise<boolean> {
 async function save() {
   const ok = await checkConnection()
   if (!ok) return
-  openAI.set(openAIKey.value)
   emit('close', true)
 }
 
@@ -137,16 +136,6 @@ function onScanError(message: string) {
               v-model="token"
               type="password"
               placeholder="your-secret-token"
-              class="w-full"
-              :ui="{ root: 'w-full' }"
-            />
-          </UFormField>
-
-          <UFormField label="OpenAI API key" description="Used for browser-based voice transcription. Stored locally in this browser.">
-            <UInput
-              v-model="openAIKey"
-              type="password"
-              placeholder="sk-..."
               class="w-full"
               :ui="{ root: 'w-full' }"
             />

@@ -1,12 +1,39 @@
+use gpui::{Pixels, px};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+/// Default dark theme name.
+pub const DEFAULT_DARK_THEME: &str = "Kibble Dark";
+/// Default light theme name.
+pub const DEFAULT_LIGHT_THEME: &str = "Kibble Light";
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FontSizePreset {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl FontSizePreset {
+    pub fn to_px(self) -> Pixels {
+        match self {
+            FontSizePreset::Small => px(14.),
+            FontSizePreset::Medium => px(16.),
+            FontSizePreset::Large => px(18.),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
-    pub default_model: Option<String>,
+    pub font_size: FontSizePreset,
     #[serde(default)]
     pub remote_control: RemoteControlConfig,
+    #[serde(default)]
+    pub theme: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -44,6 +71,8 @@ pub struct CloudflaredConfig {
     pub tunnel_token: Option<String>,
     #[serde(default)]
     pub hostname: Option<String>,
+    #[serde(default)]
+    pub bearer_token: Option<String>,
 }
 
 impl Default for CloudflaredConfig {
@@ -52,6 +81,7 @@ impl Default for CloudflaredConfig {
             command: default_cloudflared_command(),
             tunnel_token: None,
             hostname: None,
+            bearer_token: None,
         }
     }
 }

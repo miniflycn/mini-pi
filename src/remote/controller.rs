@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{
     AppContext, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
@@ -13,6 +13,7 @@ use crate::core::app::AppStore;
 use crate::core::session_handle::{SessionEvent, SessionHandle, WorkspaceInfo};
 use crate::data::models::{ChatState, Message, MessagePart, PartState, Role};
 use crate::data::store::{StoreError, ThreadMeta};
+use crate::remote::cloudflared;
 use crate::remote::server;
 use crate::remote::tunnel;
 use crate::remote::types::{AiStreamEvent, CommandEnvelope, RemoteCommand, RemoteResponse};
@@ -101,18 +102,18 @@ struct AiSubmitStream {
 enum AiPartState {
     Text {
         id: String,
-        sent_len: usize,
+        text: String,
         done: bool,
     },
     Reasoning {
         id: String,
-        sent_len: usize,
+        text: String,
         done: bool,
     },
     Tool {
         id: String,
         name: String,
-        sent_args_len: usize,
+        args: String,
         input_available: bool,
         output_available: bool,
     },
@@ -217,7 +218,7 @@ impl AiSubmitStream {
                 }
                 self.part_states.push(AiPartState::Text {
                     id,
-                    sent_len: 0,
+                    text: String::new(),
                     done: false,
                 });
             }
@@ -228,7 +229,7 @@ impl AiSubmitStream {
                 }
                 self.part_states.push(AiPartState::Reasoning {
                     id,
-                    sent_len: 0,
+                    text: String::new(),
                     done: false,
                 });
             }
@@ -246,7 +247,7 @@ impl AiSubmitStream {
                 self.part_states.push(AiPartState::Tool {
                     id,
                     name: name.to_string(),
-                    sent_args_len: 0,
+                    args: String::new(),
                     input_available: false,
                     output_available: false,
                 });
@@ -264,7 +265,7 @@ impl AiSubmitStream {
                 self.part_states.push(AiPartState::Tool {
                     id,
                     name,
-                    sent_args_len: 0,
+                    args: String::new(),
                     input_available: true,
                     output_available: false,
                 });
@@ -279,51 +280,52 @@ impl AiSubmitStream {
         };
 
         match (state, part) {
-            (AiPartState::Text { id, sent_len, done }, MessagePart::Text { text, state }) => {
+            (AiPartState::Text { id, text: _, done }, MessagePart::Text { text, state }) => {
                 let text = text.to_string();
-                if let Some(delta) = unsent_suffix(&text, sent_len) {
-                    if !self.send_chunk(json!({
-                        "type": "text-delta",
-                        "id": id,
-                        "delta": delta,
-                    })) {
+                let is_done = done || matches!(state, Some(PartState::Done));
+                if is_done && !done {
+                    if !text.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "text-delta",
+                            "id": id,
+                            "delta": text,
+                        }))
+                    {
+                        return false;
+                    }
+                    if !self.send_chunk(json!({ "type": "text-end", "id": id })) {
                         return false;
                     }
                 }
-                let is_done = done || matches!(state, Some(PartState::Done));
-                if is_done && !done && !self.send_chunk(json!({ "type": "text-end", "id": id })) {
-                    return false;
-                }
                 self.part_states[index] = AiPartState::Text {
                     id,
-                    sent_len: text.len(),
+                    text,
                     done: is_done,
                 };
             }
             (
-                AiPartState::Reasoning { id, sent_len, done },
+                AiPartState::Reasoning { id, text: _, done },
                 MessagePart::Reasoning { text, state, .. },
             ) => {
                 let text = text.to_string();
-                if let Some(delta) = unsent_suffix(&text, sent_len) {
-                    if !self.send_chunk(json!({
-                        "type": "reasoning-delta",
-                        "id": id,
-                        "delta": delta,
-                    })) {
+                let is_done = done || matches!(state, Some(PartState::Done));
+                if is_done && !done {
+                    if !text.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "reasoning-delta",
+                            "id": id,
+                            "delta": text,
+                        }))
+                    {
+                        return false;
+                    }
+                    if !self.send_chunk(json!({ "type": "reasoning-end", "id": id })) {
                         return false;
                     }
                 }
-                let is_done = done || matches!(state, Some(PartState::Done));
-                if is_done
-                    && !done
-                    && !self.send_chunk(json!({ "type": "reasoning-end", "id": id }))
-                {
-                    return false;
-                }
                 self.part_states[index] = AiPartState::Reasoning {
                     id,
-                    sent_len: text.len(),
+                    text,
                     done: is_done,
                 };
             }
@@ -331,7 +333,7 @@ impl AiSubmitStream {
                 AiPartState::Tool {
                     id,
                     name,
-                    sent_args_len,
+                    args: _,
                     input_available,
                     output_available,
                 },
@@ -348,31 +350,30 @@ impl AiSubmitStream {
                     name
                 };
                 let args = args.to_string();
-                if let Some(delta) = unsent_suffix(&args, sent_args_len) {
-                    if !self.send_chunk(json!({
-                        "type": "tool-input-delta",
-                        "toolCallId": id,
-                        "inputTextDelta": delta,
-                    })) {
+                let input_done = input_available || matches!(state, Some(PartState::Done));
+                if input_done && !input_available {
+                    if !args.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "tool-input-delta",
+                            "toolCallId": id,
+                            "inputTextDelta": args,
+                        }))
+                    {
                         return false;
                     }
-                }
-                let input_done = input_available || matches!(state, Some(PartState::Done));
-                if input_done
-                    && !input_available
-                    && !self.send_chunk(json!({
+                    if !self.send_chunk(json!({
                         "type": "tool-input-available",
                         "toolCallId": id,
                         "toolName": name,
                         "input": parse_tool_input(&args),
-                    }))
-                {
-                    return false;
+                    })) {
+                        return false;
+                    }
                 }
                 self.part_states[index] = AiPartState::Tool {
                     id,
                     name,
-                    sent_args_len: args.len(),
+                    args,
                     input_available: input_done,
                     output_available,
                 };
@@ -381,7 +382,7 @@ impl AiSubmitStream {
                 AiPartState::Tool {
                     id,
                     name,
-                    sent_args_len,
+                    args,
                     input_available,
                     output_available,
                 },
@@ -399,7 +400,7 @@ impl AiSubmitStream {
                 self.part_states[index] = AiPartState::Tool {
                     id,
                     name,
-                    sent_args_len,
+                    args,
                     input_available,
                     output_available: true,
                 };
@@ -441,24 +442,74 @@ impl AiSubmitStream {
     fn close_open_parts(&mut self) -> bool {
         for index in 0..self.part_states.len() {
             match self.part_states[index].clone() {
-                AiPartState::Text { id, sent_len, done } if !done => {
+                AiPartState::Text { id, text, done } if !done => {
+                    if !text.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "text-delta",
+                            "id": id,
+                            "delta": text,
+                        }))
+                    {
+                        return false;
+                    }
                     if !self.send_chunk(json!({ "type": "text-end", "id": id })) {
                         return false;
                     }
                     self.part_states[index] = AiPartState::Text {
                         id,
-                        sent_len,
+                        text,
                         done: true,
                     };
                 }
-                AiPartState::Reasoning { id, sent_len, done } if !done => {
+                AiPartState::Reasoning { id, text, done } if !done => {
+                    if !text.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "reasoning-delta",
+                            "id": id,
+                            "delta": text,
+                        }))
+                    {
+                        return false;
+                    }
                     if !self.send_chunk(json!({ "type": "reasoning-end", "id": id })) {
                         return false;
                     }
                     self.part_states[index] = AiPartState::Reasoning {
                         id,
-                        sent_len,
+                        text,
                         done: true,
+                    };
+                }
+                AiPartState::Tool {
+                    id,
+                    name,
+                    args,
+                    input_available,
+                    output_available,
+                } if !input_available => {
+                    if !args.is_empty()
+                        && !self.send_chunk(json!({
+                            "type": "tool-input-delta",
+                            "toolCallId": id,
+                            "inputTextDelta": args,
+                        }))
+                    {
+                        return false;
+                    }
+                    if !self.send_chunk(json!({
+                        "type": "tool-input-available",
+                        "toolCallId": id,
+                        "toolName": name,
+                        "input": parse_tool_input(&args),
+                    })) {
+                        return false;
+                    }
+                    self.part_states[index] = AiPartState::Tool {
+                        id,
+                        name,
+                        args,
+                        input_available: true,
+                        output_available,
                     };
                 }
                 _ => {}
@@ -479,14 +530,6 @@ fn stable_tool_call_id(tool_call_id: &gpui::SharedString, index: usize) -> Strin
 
 fn parse_tool_input(input: &str) -> Value {
     serde_json::from_str(input).unwrap_or_else(|_| json!(input))
-}
-
-fn unsent_suffix(value: &str, sent_len: usize) -> Option<String> {
-    if sent_len < value.len() && value.is_char_boundary(sent_len) {
-        Some(value[sent_len..].to_string())
-    } else {
-        None
-    }
 }
 
 impl RemoteController {
@@ -538,7 +581,7 @@ impl RemoteController {
         }
     }
 
-    fn save_config(&self, cx: &mut Context<Self>) {
+    pub fn save_config(&self, cx: &mut Context<Self>) {
         cx.update_global(|app: &mut AppStore, _| {
             app.config.remote_control = self.config.clone();
             if let Err(e) = app.config.save() {
@@ -584,6 +627,7 @@ impl RemoteController {
         let command_path = self.config.cloudflared.command.clone();
         let token = self.config.cloudflared.tunnel_token.clone();
         let hostname = self.config.cloudflared.hostname.clone();
+        let bearer_token = self.config.cloudflared.bearer_token.clone();
         let watchdog_attempts = self.restart_attempts;
 
         let watchdog_this = this.clone();
@@ -604,10 +648,12 @@ impl RemoteController {
 
         cx.spawn(async move |_, cx| {
             let start_result = smol::unblock(move || {
+                let command_path = cloudflared::resolve_cloudflared_command(&command_path)?;
                 tunnel::start(
                     &command_path,
                     token.as_deref(),
                     hostname.as_deref(),
+                    bearer_token.as_deref(),
                     bound_port,
                 )
             })
@@ -885,6 +931,9 @@ impl RemoteController {
                 thread_id,
                 workspace_id,
             } => self.set_workspace(thread_id, workspace_id, cx),
+            RemoteCommand::DownloadFile { path, mime_type } => {
+                self.download_file(path, mime_type, cx)
+            }
         }
     }
 
@@ -1004,6 +1053,7 @@ impl RemoteController {
             None,
             None,
             Some(Some(&metadata)),
+            false,
         ) {
             return json!({ "error": e.to_string() });
         }
@@ -1052,6 +1102,7 @@ impl RemoteController {
                     None,
                     None,
                     None,
+                    false,
                 ) {
                     return json!({ "error": e.to_string() });
                 }
@@ -1235,6 +1286,59 @@ impl RemoteController {
         json!({ "error": "thread not found" })
     }
 
+    fn download_file(
+        &self,
+        path: String,
+        mime_type: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> RemoteResponse {
+        let path = PathBuf::from(path);
+        if !path.is_absolute() {
+            return json!({ "error": "path must be absolute" });
+        }
+
+        let store = cx.global::<AppStore>().store.clone();
+        let workspaces = match store.list_workspaces() {
+            Ok(ws) => ws,
+            Err(e) => return json!({ "error": e.to_string() }),
+        };
+
+        let canonical_path = match std::fs::canonicalize(&path) {
+            Ok(p) => p,
+            Err(e) => return json!({ "error": format!("invalid path: {}", e) }),
+        };
+
+        let allowed = workspaces.iter().any(|ws| {
+            let ws_path = PathBuf::from(&ws.path);
+            let canonical_ws = std::fs::canonicalize(&ws_path).unwrap_or(ws_path);
+            canonical_path.starts_with(&canonical_ws)
+        });
+
+        if !allowed {
+            return json!({ "error": "path outside workspace" });
+        }
+
+        match std::fs::read(&canonical_path) {
+            Ok(bytes) => {
+                let name = canonical_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("download")
+                    .to_string();
+                let mime_type = mime_type.unwrap_or_else(|| guess_mime_type(&canonical_path));
+                use base64::Engine;
+                let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                json!({
+                    "name": name,
+                    "mime_type": mime_type,
+                    "size": bytes.len(),
+                    "data": data,
+                })
+            }
+            Err(e) => json!({ "error": format!("failed to read file: {}", e) }),
+        }
+    }
+
     fn persist_workspace_id(
         &self,
         thread_id: &str,
@@ -1257,6 +1361,7 @@ impl RemoteController {
             None,
             None,
             Some(Some(&md)),
+            false,
         )
     }
 
@@ -1440,6 +1545,39 @@ fn message_to_json(m: &Message) -> serde_json::Value {
     })
 }
 
+fn guess_mime_type(path: &Path) -> String {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "txt" => "text/plain",
+        "md" => "text/markdown",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "js" | "mjs" => "application/javascript",
+        "json" => "application/json",
+        "ts" => "application/typescript",
+        "py" => "text/x-python",
+        "rs" => "text/x-rust",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "zip" => "application/zip",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
 fn part_to_json(p: &MessagePart) -> serde_json::Value {
     match p {
         MessagePart::Text { text, state } => json!({
@@ -1464,12 +1602,14 @@ fn part_to_json(p: &MessagePart) -> serde_json::Value {
             name,
             output,
             state,
+            details,
             ..
         } => json!({
             "type": "tool_result",
             "name": name.to_string(),
             "output": output.to_string(),
             "state": state.as_ref().map(|s| format!("{:?}", s)),
+            "details": details,
         }),
     }
 }
@@ -1488,6 +1628,7 @@ mod tests {
                 text: SharedString::from(text.to_string()),
                 state,
             }],
+            media: Vec::new(),
         }
     }
 
@@ -1497,6 +1638,7 @@ mod tests {
             entry_id: None,
             role: Role::Assistant,
             parts: vec![],
+            media: Vec::new(),
         }
     }
 
@@ -1556,7 +1698,10 @@ mod tests {
             }
         }
 
-        assert_eq!(deltas, vec!["abcd"]);
+        assert!(
+            deltas.is_empty(),
+            "text deltas should be coalesced until the part is done"
+        );
     }
 
     #[test]
@@ -1657,6 +1802,7 @@ mod tests {
                 text: SharedString::from("old streaming text"),
                 state: Some(PartState::Streaming),
             }],
+            media: Vec::new(),
         };
         let new_empty = assistant_empty("new");
         let new_with_text = assistant_with_text("new", "hello", Some(PartState::Streaming));
@@ -1702,8 +1848,10 @@ mod tests {
                     output: SharedString::from("result"),
                     state: Some(PartState::Done),
                     tool_call_id: SharedString::from("tool-1"),
+                    details: None,
                 },
             ],
+            media: Vec::new(),
         };
         let second_empty = assistant_empty("second");
         let second_with_text =

@@ -52,8 +52,9 @@ function partToUIMessagePart(part: PiPart, index: number): UIMessage['parts'][nu
         toolName: name,
         toolCallId: `tool-${index}`,
         state: isStreaming ? 'input-streaming' : 'input-available',
-        input: parseToolInput(part.args)
-      } as DynamicToolUIPart
+        input: parseToolInput(part.args),
+        details: part.details
+      } as unknown as DynamicToolUIPart
     }
     case 'tool_result': {
       const name = part.name || 'unknown'
@@ -66,16 +67,18 @@ function partToUIMessagePart(part: PiPart, index: number): UIMessage['parts'][nu
           toolCallId: `tool-${index}`,
           state: 'output-error',
           input: undefined,
-          errorText: error.text
-        } as DynamicToolUIPart
+          errorText: error.text,
+          details: part.details
+        } as unknown as DynamicToolUIPart
       }
       return {
         type: 'dynamic-tool',
         toolName: name,
         toolCallId: `tool-${index}`,
         state: 'output-available',
-        output: parseToolOutput(rawOutput)
-      } as DynamicToolUIPart
+        output: parseToolOutput(rawOutput),
+        details: part.details
+      } as unknown as DynamicToolUIPart
     }
     default:
       return undefined

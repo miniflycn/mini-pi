@@ -114,24 +114,26 @@ pub fn clear_session(store: &Store) -> Result<(), crate::data::store::StoreError
     Ok(())
 }
 
-pub fn agent_dir() -> PathBuf {
-    let dir = dirs::home_dir()
+pub fn mini_pi_dir() -> PathBuf {
+    dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".mini-pi")
-        .join("agent");
+}
+
+pub fn bun_cache_dir() -> PathBuf {
+    let dir = mini_pi_dir().join("bun-cache");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+pub fn agent_dir() -> PathBuf {
+    let dir = mini_pi_dir().join("agent");
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
 
 pub fn is_first_run() -> bool {
-    let agent = agent_dir();
-    if !agent.exists() {
-        return true;
-    }
-    let Ok(entries) = std::fs::read_dir(&agent) else {
-        return true;
-    };
-    entries.count() == 0
+    !mini_pi_dir().exists()
 }
 
 pub fn pi_agent_source_dir() -> Option<PathBuf> {
@@ -139,7 +141,13 @@ pub fn pi_agent_source_dir() -> Option<PathBuf> {
     if dir.exists() { Some(dir) } else { None }
 }
 
-const WHITELISTED_FILES: &[&str] = &["auth.json"];
+pub fn pi_dir_exists() -> bool {
+    dirs::home_dir()
+        .map(|h| h.join(".pi").exists())
+        .unwrap_or(false)
+}
+
+const WHITELISTED_FILES: &[&str] = &["auth.json", "settings.json", "models.json"];
 
 pub fn list_pi_agent_json_files() -> Vec<(String, PathBuf)> {
     let Some(source) = pi_agent_source_dir() else {

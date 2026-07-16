@@ -76,7 +76,7 @@ defineShortcuts({
 </script>
 
 <template>
-  <UDashboardGroup unit="rem">
+  <UDashboardGroup unit="rem" class="pb-safe">
     <UDashboardSidebar
       id="default"
       v-model:open="sidebarOpen"

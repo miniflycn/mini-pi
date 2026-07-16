@@ -47,6 +47,37 @@ pub fn parse_model_id(id: &str) -> Option<(&str, &str)> {
     id.split_once(':')
 }
 
+/// Reconstruct a full "provider:model" id from the SDK's stored default model.
+/// If a provider is supplied and `provider:model_id` exists in the available
+/// models, that full id is returned. Otherwise we fall back to any available
+/// model whose bare id matches.
+pub fn resolve_full_model_id(
+    models: &[ModelInfo],
+    provider: Option<&str>,
+    model_id: Option<&str>,
+) -> Option<String> {
+    let model_id = model_id?;
+    if model_id.is_empty() {
+        return None;
+    }
+
+    if let Some(provider) = provider {
+        let full_id = format!("{}:{}", provider, model_id);
+        if models.iter().any(|m| m.id == full_id) {
+            return Some(full_id);
+        }
+    }
+
+    models
+        .iter()
+        .find(|m| {
+            parse_model_id(&m.id)
+                .map(|(_, id)| id == model_id)
+                .unwrap_or(false)
+        })
+        .map(|m| m.id.clone())
+}
+
 pub fn model_display_name(models: &[ModelInfo], id: Option<&str>) -> SharedString {
     match id {
         Some(id) => get_model_name(models, id)

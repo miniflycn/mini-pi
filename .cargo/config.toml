@@ -1,0 +1,5 @@
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/PDBPagesize:8192"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/PDBPagesize:8192"]

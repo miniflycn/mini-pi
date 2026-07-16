@@ -46,7 +46,6 @@ Example minimal config:
 
 ```json
 {
-  "default_model": "cloudflare-ai-gateway:gpt-4o-mini",
   "remote_control": {
     "enabled": true,
     "bind_port": 9876
@@ -64,6 +63,7 @@ Example minimal config:
 | `remote_control.cloudflared.command` | string | `"cloudflared"` | Path or name of the `cloudflared` binary. |
 | `remote_control.cloudflared.tunnel_token` | string | `null` | Use a named Cloudflare tunnel instead of a quick tunnel. |
 | `remote_control.cloudflared.hostname` | string | `null` | Required when using a named tunnel token. |
+| `remote_control.cloudflared.bearer_token` | string | `null` | Optional Cloudflare API token passed as `CLOUDFLARE_API_TOKEN` to the cloudflared process. |
 
 ### Named tunnels
 
@@ -82,6 +82,10 @@ For a permanent hostname, set `tunnel_token` and `hostname`:
 ```
 
 When both are set, `cloudflared tunnel run --token <token>` is used and `hostname` is reported as the public URL.
+
+### In-app prompt
+
+When you enable remote control from the user settings panel and `remote_control.cloudflared.bearer_token` is not already set, the app shows a modal asking for a temporary Cloudflare API token. The entered token is saved to `config.json` and passed to the cloudflared process as `CLOUDFLARE_API_TOKEN`. You can also set it manually in `config.json` before enabling remote control.
 
 ---
 
@@ -266,10 +270,12 @@ X-Accel-Buffering: no
 
 The response body is a data-only Server-Sent Events stream using the AI SDK UI message chunk protocol.
 
+To save bandwidth, the server coalesces `text-delta`, `reasoning-delta`, and `tool-input-delta` events for each part and emits a single merged delta when that part finishes, instead of streaming every small change.
+
 ```
 data: {"type":"start","messageId":"msg-uuid-4"}
 data: {"type":"text-start","id":"text-0"}
-data: {"type":"text-delta","id":"text-0","delta":"Here is"}
+data: {"type":"text-delta","id":"text-0","delta":"Here is the refactored function using Result."}
 data: {"type":"text-end","id":"text-0"}
 data: {"type":"finish-step"}
 data: {"type":"finish","finishReason":"stop"}
@@ -324,6 +330,38 @@ Changes the workspace for the thread.
 
 ```json
 { "status": "ok" }
+```
+
+---
+
+### `POST /files/download`
+
+Downloads a file that was referenced by a `send_file` tool result. The desktop app validates that the requested path is inside a known workspace before returning it.
+
+**Request body**
+
+```json
+{
+  "path": "/home/user/workspace/report.txt",
+  "mime_type": "text/plain"
+}
+```
+
+`mime_type` is optional; if omitted, the server guesses from the file extension.
+
+**Response `200 OK`**
+
+```http
+Content-Type: text/plain
+Content-Disposition: attachment; filename="report.txt"
+```
+
+The response body is the raw file bytes.
+
+If the file is not found, is outside a workspace, or the path is not absolute, the response is a `400`/`404`/`500` JSON error:
+
+```json
+{ "error": "path outside workspace" }
 ```
 
 ---

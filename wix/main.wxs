@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="Mini Pi"
+    Manufacturer="Earendil Works"
+    Version="0.1.0"
+    UpgradeCode="92056637-86e9-41fb-b786-da8245e44055"
+    Language="1033"
+    Codepage="1252"
+  >
+    <Package
+      InstallerVersion="200"
+      Compressed="yes"
+      InstallScope="perMachine"
+      Platform="x64"
+    />
+
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of Mini Pi is already installed."
+    />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="installer\app.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Mini Pi" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Mini Pi" />
+      </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
+    </Directory>
+
+    <Feature Id="ProductFeature" Title="Mini Pi" Level="1">
+      <ComponentGroupRef Id="ApplicationFiles" />
+      <ComponentRef Id="ApplicationShortcut" />
+      <ComponentRef Id="ApplicationDesktopShortcut" />
+    </Feature>
+
+    <Component
+      Id="ApplicationShortcut"
+      Directory="ApplicationProgramsFolder"
+      Guid="e67c544f-7611-45db-8283-346a87439393"
+    >
+      <Shortcut
+        Id="ApplicationStartMenuShortcut"
+        Name="Mini Pi"
+        Description="A desktop chat interface for the pi coding agent"
+        Target="[INSTALLFOLDER]mini-pi.exe"
+        WorkingDirectory="INSTALLFOLDER"
+        Icon="AppIcon.ico"
+      />
+      <RemoveFolder
+        Id="RemoveApplicationProgramsFolder"
+        Directory="ApplicationProgramsFolder"
+        On="uninstall"
+      />
+      <RegistryValue
+        Root="HKCU"
+        Key="Software\Earendil Works\Mini Pi"
+        Name="installed"
+        Type="integer"
+        Value="1"
+        KeyPath="yes"
+      />
+    </Component>
+
+    <Component
+      Id="ApplicationDesktopShortcut"
+      Directory="DesktopFolder"
+      Guid="6a8f2b1c-7d3e-4c5a-9b0e-1f2a3c4d5e6f"
+    >
+      <Shortcut
+        Id="ApplicationDesktopShortcut"
+        Name="Mini Pi"
+        Description="A desktop chat interface for the pi coding agent"
+        Target="[INSTALLFOLDER]mini-pi.exe"
+        WorkingDirectory="INSTALLFOLDER"
+        Icon="AppIcon.ico"
+      />
+      <RegistryValue
+        Root="HKCU"
+        Key="Software\Earendil Works\Mini Pi"
+        Name="desktop_shortcut"
+        Type="integer"
+        Value="1"
+        KeyPath="yes"
+      />
+    </Component>
+  </Product>
+</Wix>

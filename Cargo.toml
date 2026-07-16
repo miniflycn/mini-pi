@@ -4,19 +4,20 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-gpui = "0.2.2"
+gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["test-support"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 unicode-segmentation = "1.12"
-raw-window-handle = "0.6"
+raw-window-handle = { version = "0.6.2", features = ["std"] }
 smol = "2"
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
 rusqlite = { version = "0.33", features = ["bundled"] }
+parking_lot = "0.12"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 nanoid = "0.4"
-pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
 sha2 = "0.10"
 cpal = "0.15"
@@ -25,8 +26,8 @@ base64 = "0.22"
 url = "2"
 percent-encoding = "2"
 fs2 = "0.4"
-syntect = "5"
 linkify = "0.9"
+mime_guess = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "net"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-tungstenite = "0.26"
@@ -35,9 +36,30 @@ tower-http = { version = "0.6", features = ["cors"] }
 qrcode = { version = "0.14", default-features = false, features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 subtle = "2"
-gpui-component = "0.5.1"
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git", rev = "7315e07" }
+gpui-wry = { git = "https://github.com/longbridge/gpui-component.git", rev = "7315e07" }
+wry = { version = "0.53.3", package = "lb-wry" }
+zip = "2"
+tar = "0.4"
+flate2 = "1"
+tray-icon = { version = "0.24", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
-tar = "0.4"
-flate2 = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.24", default-features = false, features = ["gtk", "libxdo"] }
+gtk = { version = "0.18", features = ["v3_24"] }
+
+[package.metadata.bundle]
+name = "Mini Pi"
+identifier = "one.raven-ai.mini-pi"
+icon = ["scripts/installer/app.icns"]
+version = "0.1.0"
+category = "Developer Tool"
+short_description = "A desktop chat interface for the pi coding agent"
+long_description = "Mini Pi is a native chat-window wrapper around the pi coding agent SDK."
+resources = ["assets", "pi-bridge"]
+
+[lints.rust]
+unexpected_cfgs = "allow"

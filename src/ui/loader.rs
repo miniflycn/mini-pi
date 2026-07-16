@@ -55,7 +55,7 @@ pub fn spinner() -> impl IntoElement {
 /// Create a spinner with a custom size (in pixels) and colour (24-bit hex).
 pub fn spinner_with(size: f32, color: u32) -> impl IntoElement {
     svg()
-        .path("spinner.svg")
+        .path("icons/spinner.svg")
         .size(px(size))
         .text_color(rgb(color))
         .with_animation(

@@ -21,6 +21,12 @@ pub async fn require_bearer_token(
     req: Request<Body>,
     next: Next,
 ) -> Response {
+    // CORS preflight requests are sent by browsers without credentials.
+    // Let them pass through so the CorsLayer can respond.
+    if req.method() == axum::http::Method::OPTIONS {
+        return next.run(req).await;
+    }
+
     if let Some(ref expected) = state.bearer_token {
         let provided = extract_token(&req).unwrap_or("");
         let expected_bytes = expected.as_bytes();

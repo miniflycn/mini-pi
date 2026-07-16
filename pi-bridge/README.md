@@ -7,16 +7,12 @@ The Rust GUI opens a single WebSocket connection to this bridge and multiplexes 
 ## Install
 
 ```bash
-npm install
-# or
 bun install
 ```
 
 ## Run standalone (for development)
 
 ```bash
-npm run start
-# or
 bun run src/index.ts
 ```
 

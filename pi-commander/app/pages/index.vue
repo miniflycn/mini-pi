@@ -3,6 +3,8 @@ const input = ref('')
 const creating = ref(false)
 const selectedWorkspaceId = ref<string | null>(null)
 
+let createAbortController: AbortController | null = null
+
 const config = usePiRemoteConfig()
 const remote = usePiRemote()
 const init = usePiInit()
@@ -51,19 +53,30 @@ async function createChat(prompt: string) {
 
   input.value = prompt
   creating.value = true
+  createAbortController = new AbortController()
 
   try {
     const { thread_id } = await remote.createThread(
       model.value || undefined,
-      selectedWorkspaceId.value
+      selectedWorkspaceId.value,
+      createAbortController.signal
     )
+    if (createAbortController.signal.aborted) {
+      return
+    }
     if (thinkingLevel.value) {
-      await remote.setThinkingLevel(thread_id, thinkingLevel.value)
+      await remote.setThinkingLevel(thread_id, thinkingLevel.value, createAbortController.signal)
+    }
+    if (createAbortController.signal.aborted) {
+      return
     }
     const pendingPrompt = useState<string | null>(`pending-prompt-${thread_id}`, () => null)
     pendingPrompt.value = prompt
     await navigateTo(`/chat/${thread_id}`)
   } catch (err) {
+    if (createAbortController?.signal.aborted) {
+      return
+    }
     toast.add({
       description: err instanceof Error ? err.message : String(err),
       icon: 'i-lucide-alert-circle',
@@ -71,11 +84,17 @@ async function createChat(prompt: string) {
     })
   } finally {
     creating.value = false
+    createAbortController = null
   }
 }
 
 async function onSubmit() {
   await createChat(input.value)
+}
+
+function handleStopCreate() {
+  creating.value = false
+  createAbortController?.abort()
 }
 </script>
 
@@ -179,8 +198,9 @@ async function onSubmit() {
           :status="creating ? 'streaming' : 'ready'"
           :disabled="!selectedWorkspaceId || loadingWorkspaces"
           :submit-disabled="creating || !selectedWorkspaceId"
-          class="[view-transition-name:chat-prompt]"
+          class="[view-transition-name:chat-prompt] pb-safe"
           @submit="onSubmit"
+          @stop="handleStopCreate"
         />
 
         <p

@@ -19,6 +19,7 @@ const loadingThread = ref(true)
 const { level: thinkingLevel, setLevel: setThinkingLevel } = useThinkingLevel()
 
 let activeAbortController: AbortController | null = null
+const isStopping = ref(false)
 
 async function loadThread() {
   loadingThread.value = true
@@ -87,12 +88,16 @@ async function handleSubmit() {
 
   const abortController = new AbortController()
   activeAbortController = abortController
+  isStopping.value = false
 
   try {
     status.value = 'submitted'
     chatError.value = undefined
     const stream = await remote.sendMessageStream(threadId.value, text, abortController.signal)
     for await (const assistantMessage of readUIMessageStream({ stream })) {
+      if (isStopping.value) {
+        break
+      }
       const index = messages.value.findIndex(message => message.id === assistantMessage.id)
       if (index >= 0) {
         messages.value[index] = assistantMessage
@@ -103,7 +108,7 @@ async function handleSubmit() {
     }
     status.value = 'ready'
   } catch (err) {
-    if (abortController.signal.aborted) {
+    if (abortController.signal.aborted || isStopping.value) {
       status.value = 'ready'
       return
     }
@@ -115,6 +120,7 @@ async function handleSubmit() {
       color: 'error'
     })
   } finally {
+    isStopping.value = false
     if (activeAbortController === abortController) {
       activeAbortController = null
     }
@@ -122,7 +128,12 @@ async function handleSubmit() {
 }
 
 async function handleAbort() {
+  if (status.value !== 'streaming' && status.value !== 'submitted') return
+
+  isStopping.value = true
   activeAbortController?.abort()
+  status.value = 'ready'
+
   try {
     await remote.abortThread(threadId.value)
   } catch (err) {
@@ -212,7 +223,7 @@ watch(thinkingLevel, async (newLevel) => {
             v-model="input"
             :status="status"
             :error="chatError"
-            class="sticky bottom-0 [view-transition-name:chat-prompt] rounded-b-none z-10"
+            class="sticky bottom-0 [view-transition-name:chat-prompt] rounded-b-none z-10 pb-safe"
             @submit="handleSubmit"
             @stop="handleAbort"
           />

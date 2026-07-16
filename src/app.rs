@@ -1,28 +1,39 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::sync::Arc;
 
-use gpui::prelude::*;
 use gpui::{
-    App, Application, Bounds, FontWeight, KeyBinding, Menu, MenuItem, Window, WindowBounds,
-    WindowDecorations, WindowOptions, px, size,
+    App, Application, Bounds, KeyBinding, Menu, MenuItem, MouseButton, OsAction, QuitMode,
+    SharedString, Window, WindowBounds, WindowDecorations, WindowOptions, prelude::*, px, size,
 };
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
-use gpui_component::{ActiveTheme, Icon, Root, Sizable as _, TitleBar};
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::tab::{Tab, TabBar};
+use gpui_component::theme::{Theme, ThemeRegistry};
+use gpui_component::{ActiveTheme, Icon, Root, Sizable, TitleBar};
 
 use crate::auth::state::{self, AuthState};
-use crate::config::app_config::AppConfig;
+use crate::config::app_config::{AppConfig, DEFAULT_DARK_THEME, FontSizePreset};
+use crate::config::command_config;
 use crate::config::model_config;
-use crate::core::actions::Quit;
-use crate::core::app::AppStore;
+use crate::core::actions::{
+    About, Copy, CreateThread, Cut, Login, OpenInstallExtensionWindow, OpenPiSettingsWindow, Paste,
+    Quit, Redo, SelectAll, SelectFontLarge, SelectFontMedium, SelectFontSmall, ShowMainWindow, SignUp,
+    ToggleMainWindow, Undo,
+};
+use crate::core::app::apply_font_size;
+use crate::core::app::{AppStore, MainOverlay, custom_window_options};
 use crate::core::assets::Assets;
-use crate::core::session_manager::SessionManager;
+use crate::core::tray::TrayManager;
+
 use crate::data::store::Store;
 use crate::remote::RemoteController;
 use crate::rpc::pi_rpc::PiBridge;
 use crate::sync::settings_sync;
+use crate::views::about::open_about_window;
+use crate::views::auth_dialog::{AuthDialogMode, AuthDialogView};
+use crate::views::chat_app::open_chat_window;
+use crate::views::install_extension::open_install_extension_window;
+use crate::views::mini_app::{MiniApp, MiniAppEvent};
+use crate::views::pi_settings::open_pi_settings_window;
+use crate::views::skills_panel::SkillsPanel;
 use crate::views::thread_list::ThreadList;
 use crate::views::user_panel::{UserPanel, UserPanelEvent};
 
@@ -34,7 +45,7 @@ pub fn run() {
     if let Err(e) = config.save() {
         eprintln!("[remote] failed to save startup config: {}", e);
     }
-    let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
+    let assets_dir = crate::utils::paths::app_root().join("assets");
 
     let (auth, session) = match state::load_session(&store) {
         Some(session) => {
@@ -77,10 +88,38 @@ pub fn run() {
         }
     };
 
-    Application::new()
+    Application::with_platform(gpui_platform::current_platform(false))
         .with_assets(Assets { base: assets_dir })
+        .with_quit_mode(QuitMode::Explicit)
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
+
+            let themes_dir = crate::utils::paths::app_root()
+                .join("assets")
+                .join("themes");
+            let initial_theme_name = config
+                .theme
+                .clone()
+                .unwrap_or_else(|| DEFAULT_DARK_THEME.to_string());
+            if let Err(err) = ThemeRegistry::watch_dir(themes_dir, cx, move |cx| {
+                let theme_name = SharedString::from(initial_theme_name.clone());
+                if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
+                    let mode = theme.mode;
+                    let global_theme = Theme::global_mut(cx);
+                    if mode.is_dark() {
+                        global_theme.dark_theme = theme;
+                    } else {
+                        global_theme.light_theme = theme;
+                    }
+                    Theme::change(mode, None, cx);
+                    cx.refresh_windows();
+                }
+            }) {
+                eprintln!("[theme] failed to watch themes directory: {}", err);
+            }
+            // Other theme settings
+            Theme::global_mut(cx).notification.placement = gpui::Anchor::TopCenter;
+            Theme::global_mut(cx).font_size = config.font_size.to_px();
 
             let models = pi_bridge
                 .as_ref()
@@ -100,193 +139,366 @@ pub fn run() {
                 );
             }
 
+            let commands = pi_bridge
+                .as_ref()
+                .map(|bridge| match command_config::load_commands(bridge) {
+                    Ok(commands) => {
+                        eprintln!("[mini-pi] loaded {} commands", commands.len());
+                        commands
+                    }
+                    Err(e) => {
+                        eprintln!("[mini-pi] failed to load command list: {}", e);
+                        Vec::new()
+                    }
+                })
+                .unwrap_or_default();
+
             let remote_controller =
                 cx.new(|cx| RemoteController::new(cx, config.remote_control.clone()));
 
-            cx.set_global(AppStore {
-                store: store.clone(),
-                config: config.clone(),
-                thread_windows: HashMap::new(),
-                auth: auth.clone(),
-                session: session.clone(),
+            cx.set_global(AppStore::new(
+                store.clone(),
+                config.clone(),
+                auth.clone(),
+                session.clone(),
                 sync_meta,
-                sync_status: settings_sync::SyncStatus::Idle,
-                user_panel_active: false,
-                pi_bridge: pi_bridge.clone(),
-                session_manager: SessionManager::new(),
-                streaming_thread_ids: HashSet::new(),
-                remote_controller: Some(remote_controller),
+                pi_bridge.clone(),
+                Some(remote_controller),
                 models,
-            });
+                commands,
+            ));
 
             if auth.is_logged_in() {
                 if let Some(ref sess) = session {
                     let _ = state::agent_dir();
-                    let access_token = sess.access_token.clone();
-                    let user_id = sess.user.id.clone();
-                    let initial_meta = initial_sync_meta.clone();
-                    cx.spawn(async move |cx| {
-                        let result = smol::unblock(move || {
-                            settings_sync::sync_changes(&access_token, &user_id, initial_meta)
-                        })
-                        .await;
-                        let _ = cx.update_global(|app: &mut AppStore, _| {
-                            app.sync_status = match result {
-                                Ok(meta) => {
-                                    let _ = settings_sync::save_sync_meta(&app.store, &meta);
-                                    app.sync_meta = meta;
-                                    settings_sync::SyncStatus::Synced
-                                }
-                                Err(e) => settings_sync::SyncStatus::Error(e),
-                            };
-                        });
-                    })
-                    .detach();
+                    trigger_sync(
+                        sess.access_token.clone(),
+                        sess.user.id.clone(),
+                        initial_sync_meta.clone(),
+                        cx,
+                    );
                 }
             }
 
             cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
-            cx.bind_keys([
-                KeyBinding::new("ctrl-w", crate::core::actions::CloseWindow, None),
+            cx.on_action(|_: &ShowMainWindow, cx: &mut App| {
+                open_main_window(cx);
+            });
+            cx.on_action(|_: &ToggleMainWindow, cx: &mut App| {
+                let (handle, hidden) = cx.update_global::<AppStore, _>(|app, _| {
+                    (app.main_window, app.main_window_hidden)
+                });
+                match handle {
+                    Some(handle) if !hidden => {
+                        let still_open = handle
+                            .update(cx, |_view, window, _app| {
+                                crate::utils::window_helpers::hide_window(window);
+                            })
+                            .is_ok();
+                        if still_open {
+                            cx.update_global(|app: &mut AppStore, _| {
+                                app.main_window_hidden = true;
+                            });
+                        }
+                    }
+                    Some(handle) => {
+                        let _ = handle.update(cx, |_view, window, _app| {
+                            crate::utils::window_helpers::show_and_activate_window(window);
+                        });
+                        cx.update_global(|app: &mut AppStore, _| {
+                            app.main_window_hidden = false;
+                        });
+                    }
+                    None => open_main_window(cx),
+                }
+            });
+            cx.on_action(|_: &CreateThread, cx: &mut App| {
+                let store = cx.global::<AppStore>().store.clone();
+                let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
+                open_chat_window(cx, None, store, custom_window_options(Some(bounds)));
+            });
+            cx.on_action(|_: &About, cx: &mut App| {
+                open_about_window(cx);
+            });
+            cx.on_action(|_: &OpenInstallExtensionWindow, cx: &mut App| {
+                open_install_extension_window(cx);
+            });
+            cx.on_action(|_: &OpenPiSettingsWindow, cx: &mut App| {
+                open_pi_settings_window(cx);
+            });
+            cx.on_action(|_: &Login, cx: &mut App| {
+                if let Some(window) = cx.active_window() {
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        AuthDialogView::open(window, cx, AuthDialogMode::Login);
+                    });
+                }
+            });
+            cx.on_action(|_: &SignUp, cx: &mut App| {
+                if let Some(window) = cx.active_window() {
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        AuthDialogView::open(window, cx, AuthDialogMode::Signup);
+                    });
+                }
+            });
+            cx.on_action(|_: &SelectFontSmall, cx: &mut App| {
+                apply_font_size(FontSizePreset::Small, cx);
+            });
+            cx.on_action(|_: &SelectFontMedium, cx: &mut App| {
+                apply_font_size(FontSizePreset::Medium, cx);
+            });
+            cx.on_action(|_: &SelectFontLarge, cx: &mut App| {
+                apply_font_size(FontSizePreset::Large, cx);
+            });
+            let mut key_bindings = vec![
                 KeyBinding::new("cmd-w", crate::core::actions::CloseWindow, None),
                 KeyBinding::new("cmd-q", Quit, None),
                 KeyBinding::new("enter", crate::core::actions::SendMessage, None),
-                KeyBinding::new("backspace", crate::ui::input::Backspace, None),
-                KeyBinding::new("delete", crate::ui::input::Delete, None),
-                KeyBinding::new("left", crate::ui::input::Left, None),
-                KeyBinding::new("right", crate::ui::input::Right, None),
-                KeyBinding::new("shift-left", crate::ui::input::SelectLeft, None),
-                KeyBinding::new("shift-right", crate::ui::input::SelectRight, None),
-                KeyBinding::new("ctrl-f", crate::ui::input::Forward, None),
-                KeyBinding::new("ctrl-b", crate::ui::input::Backward, None),
-                KeyBinding::new("cmd-a", crate::ui::input::SelectAll, None),
-                KeyBinding::new("cmd-v", crate::ui::input::Paste, None),
-                KeyBinding::new("cmd-c", crate::ui::input::CopyText, None),
-                KeyBinding::new("cmd-x", crate::ui::input::Cut, None),
-                KeyBinding::new("home", crate::ui::input::Home, None),
-                KeyBinding::new("end", crate::ui::input::End, None),
-                KeyBinding::new("ctrl-a", crate::ui::input::Home, None),
-                KeyBinding::new("ctrl-e", crate::ui::input::End, None),
-                KeyBinding::new(
-                    "backspace",
-                    crate::ui::text_area::Backspace,
-                    Some("TextArea"),
-                ),
-                KeyBinding::new("delete", crate::ui::text_area::Delete, Some("TextArea")),
-                KeyBinding::new("left", crate::ui::text_area::Left, Some("TextArea")),
-                KeyBinding::new("right", crate::ui::text_area::Right, Some("TextArea")),
-                KeyBinding::new(
-                    "shift-left",
-                    crate::ui::text_area::SelectLeft,
-                    Some("TextArea"),
-                ),
-                KeyBinding::new(
-                    "shift-right",
-                    crate::ui::text_area::SelectRight,
-                    Some("TextArea"),
-                ),
-                KeyBinding::new("ctrl-f", crate::ui::text_area::Forward, Some("TextArea")),
-                KeyBinding::new("ctrl-b", crate::ui::text_area::Backward, Some("TextArea")),
-                KeyBinding::new("cmd-a", crate::ui::text_area::SelectAll, Some("TextArea")),
-                KeyBinding::new("cmd-v", crate::ui::text_area::Paste, Some("TextArea")),
-                KeyBinding::new("cmd-c", crate::ui::text_area::CopyText, Some("TextArea")),
-                KeyBinding::new("cmd-x", crate::ui::text_area::Cut, Some("TextArea")),
-                KeyBinding::new("home", crate::ui::text_area::Home, Some("TextArea")),
-                KeyBinding::new("end", crate::ui::text_area::End, Some("TextArea")),
-                KeyBinding::new("ctrl-a", crate::ui::text_area::Home, Some("TextArea")),
-                KeyBinding::new("ctrl-e", crate::ui::text_area::End, Some("TextArea")),
-                KeyBinding::new("shift-enter", crate::ui::text_area::Newline, Some("TextArea")),
-            ]);
+                KeyBinding::new("cmd-c", Copy, None),
+                KeyBinding::new("cmd-x", Cut, None),
+                KeyBinding::new("cmd-v", Paste, None),
+                KeyBinding::new("cmd-a", SelectAll, None),
+                KeyBinding::new("cmd-z", Undo, None),
+                KeyBinding::new("cmd-shift-z", Redo, None),
+            ];
+            if !cfg!(target_os = "macos") {
+                key_bindings.push(KeyBinding::new(
+                    "ctrl-w",
+                    crate::core::actions::CloseWindow,
+                    None,
+                ));
+                key_bindings.push(KeyBinding::new("ctrl-c", Copy, None));
+                key_bindings.push(KeyBinding::new("ctrl-x", Cut, None));
+                key_bindings.push(KeyBinding::new("ctrl-v", Paste, None));
+                key_bindings.push(KeyBinding::new("ctrl-a", SelectAll, None));
+                key_bindings.push(KeyBinding::new("ctrl-z", Undo, None));
+                key_bindings.push(KeyBinding::new("ctrl-shift-z", Redo, None));
+            }
+            cx.bind_keys(key_bindings);
 
-            cx.set_menus(vec![Menu {
+            #[allow(unused_mut)]
+            let mut menus = vec![Menu {
                 name: "Mini Pi".into(),
-                items: vec![MenuItem::action("Quit", Quit)],
-            }]);
+                items: vec![
+                    MenuItem::action("About Mini Pi", About),
+                    MenuItem::separator(),
+                    MenuItem::action("Quit", Quit),
+                ],
+                disabled: false,
+            }];
 
-            cx.on_window_closed(|cx: &mut App| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
+            menus.push(Menu {
+                name: "Edit".into(),
+                items: vec![
+                    MenuItem::os_action("Undo", Undo, OsAction::Undo),
+                    MenuItem::os_action("Redo", Redo, OsAction::Redo),
+                    MenuItem::separator(),
+                    MenuItem::os_action("Cut", Cut, OsAction::Cut),
+                    MenuItem::os_action("Copy", Copy, OsAction::Copy),
+                    MenuItem::os_action("Paste", Paste, OsAction::Paste),
+                    MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
+                ],
+                disabled: false,
+            });
+
+            menus.push(Menu {
+                name: "View".into(),
+                items: vec![
+                    MenuItem::action("Small Font", SelectFontSmall),
+                    MenuItem::action("Medium Font", SelectFontMedium),
+                    MenuItem::action("Large Font", SelectFontLarge),
+                ],
+                disabled: false,
+            });
+
+            menus.push(Menu {
+                name: "Window".into(),
+                items: vec![MenuItem::action("Show Main Window", ShowMainWindow)],
+                disabled: false,
+            });
+
+            cx.set_menus(menus);
+
+            cx.on_window_closed(|cx: &mut App, window_id| {
+                cx.update_global(|app: &mut AppStore, _| {
+                    if app
+                        .main_window
+                        .map(|h| h.window_id() == window_id)
+                        .unwrap_or(false)
+                    {
+                        app.main_window = None;
+                        app.main_window_hidden = false;
+                    }
+                });
             })
             .detach();
 
-            let bounds = Bounds::centered(None, size(px(420.0), px(600.0)), cx);
-            let window_options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitleBar::title_bar_options()),
-                window_decorations: if cfg!(target_os = "macos") {
-                    None
-                } else {
-                    Some(WindowDecorations::Client)
-                },
-                ..Default::default()
-            };
-
-            cx.open_window(window_options, |window, cx| {
-                let app = cx.new(|cx| MiniPiApp::new(window, cx));
-                let focus_handle = app.read(cx).thread_list.read(cx).focus_handle.clone();
-                window.focus(&focus_handle);
-                cx.new(|cx| Root::new(app, window, cx))
-            })
-            .expect("failed to open the Mini Pi window");
-
+            open_main_window(cx);
+            TrayManager::init(cx);
             cx.activate(true);
         });
+}
+
+fn open_main_window(cx: &mut App) {
+    let existing = cx.update_global::<AppStore, _>(|app, _| app.main_window);
+    if let Some(handle) = existing {
+        let _ = handle.update(cx, |_view, window, _app| {
+            crate::utils::window_helpers::show_and_activate_window(window);
+        });
+        cx.update_global(|app: &mut AppStore, _| {
+            app.main_window_hidden = false;
+        });
+        return;
+    }
+
+    let bounds = Bounds::centered(None, size(px(420.0), px(600.0)), cx);
+    let window_options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_min_size: Some(size(px(300.0), px(300.0))),
+        titlebar: Some(TitleBar::title_bar_options()),
+        window_decorations: if cfg!(target_os = "macos") {
+            None
+        } else {
+            Some(WindowDecorations::Client)
+        },
+        ..Default::default()
+    };
+
+    let handle = cx
+        .open_window(window_options, |window, cx| {
+            let app = cx.new(|cx| MiniPiApp::new(window, cx));
+            let focus_handle = app.read(cx).thread_list.read(cx).focus_handle.clone();
+            window.focus(&focus_handle, cx);
+            cx.new(|cx| Root::new(app, window, cx))
+        })
+        .expect("failed to open the Mini Pi window");
+
+    cx.update_global::<AppStore, _>(|app, _| {
+        app.main_window = Some(handle.into());
+        app.main_window_hidden = false;
+    });
+}
+
+/// Trigger a background agent-config sync against Supabase Storage and
+/// reflect the result in `AppStore::sync_status`. Used both at startup
+/// (when a valid session is restored) and reactively when the user logs in
+/// via the `UserPanel`. Both codepaths previously inlined this logic.
+pub(crate) fn trigger_sync<C>(
+    access_token: String,
+    user_id: String,
+    initial_meta: settings_sync::SyncMeta,
+    cx: &mut C,
+) where
+    C: std::borrow::BorrowMut<gpui::App>,
+{
+    cx.update_global(|app: &mut AppStore, _| {
+        app.sync_status = settings_sync::SyncStatus::Syncing;
+    });
+    cx.borrow_mut()
+        .spawn(async move |cx: &mut gpui::AsyncApp| {
+            let result = smol::unblock(move || {
+                settings_sync::sync_changes(&access_token, &user_id, initial_meta)
+            })
+            .await;
+            let _ = cx.update_global(|app: &mut AppStore, _| {
+                app.sync_status = match result {
+                    Ok(meta) => {
+                        let _ = settings_sync::save_sync_meta(&app.store, &meta);
+                        app.sync_meta = meta;
+                        settings_sync::SyncStatus::Synced
+                    }
+                    Err(e) => settings_sync::SyncStatus::Error(e),
+                };
+            });
+        })
+        .detach();
+}
+
+/// Tabs in the main Mini Pi window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum MiniPiTab {
+    #[default]
+    Threads,
+    Skills,
+}
+
+impl MiniPiTab {
+    fn from_index(index: usize) -> Self {
+        match index {
+            1 => MiniPiTab::Skills,
+            _ => MiniPiTab::Threads,
+        }
+    }
 }
 
 struct MiniPiApp {
     thread_list: gpui::Entity<ThreadList>,
     user_panel: gpui::Entity<UserPanel>,
+    mini_app: gpui::Entity<MiniApp>,
+    skills_panel: gpui::Entity<SkillsPanel>,
+    active_tab_index: usize,
+    pinned: bool,
     _user_panel_subscription: gpui::Subscription,
+    _mini_app_subscription: gpui::Subscription,
 }
 
 impl MiniPiApp {
-    fn new(_window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
         let store = cx.global::<AppStore>().store.clone();
-        let thread_list = cx.new(|cx| ThreadList::new(cx, store));
-        let user_panel = cx.new(|cx| UserPanel::new(cx));
+        let thread_list = cx.new(|cx| ThreadList::new(window, cx, store));
+        let user_panel = cx.new(|cx| UserPanel::new(window, cx));
+        let mini_app = cx.new(|cx| MiniApp::new(window, cx));
+        let skills_panel = cx.new(|cx| SkillsPanel::new(window, cx));
 
         let _user_panel_subscription =
-            cx.subscribe(&user_panel, move |_this, _, event: &UserPanelEvent, cx| {
-                cx.update_global(|app: &mut AppStore, _| {
-                    app.user_panel_active = false;
-                });
+            cx.subscribe(&user_panel, move |this, _, event: &UserPanelEvent, cx| {
+                let mut reset_panel = true;
                 match event {
                     UserPanelEvent::AuthStateChanged => {
                         let auth = cx.global::<AppStore>().auth.clone();
                         if let AuthState::LoggedIn(_) = &auth {
                             let session = cx.global::<AppStore>().session.clone();
                             if let Some(s) = session {
-                                cx.update_global(|app: &mut AppStore, _| {
-                                    app.sync_status = settings_sync::SyncStatus::Syncing;
-                                });
-                                cx.notify();
-                                let access_token = s.access_token.clone();
-                                let user_id = s.user.id.clone();
                                 let initial_meta = cx.global::<AppStore>().sync_meta.clone();
-                                cx.spawn(async move |_, cx| {
-                                    let result = smol::unblock(move || {
-                                        settings_sync::sync_changes(&access_token, &user_id, initial_meta)
-                                    })
-                                    .await;
-                                    let _ =
-                                        cx.update_global(|app: &mut AppStore, _| match result {
-                                            Ok(meta) => {
-                                                let _ = settings_sync::save_sync_meta(&app.store, &meta);
-                                                app.sync_meta = meta;
-                                                app.sync_status = settings_sync::SyncStatus::Synced;
-                                            }
-                                            Err(e) => {
-                                                app.sync_status =
-                                                    settings_sync::SyncStatus::Error(e);
-                                            }
-                                        });
-                                })
-                                .detach();
+                                trigger_sync(
+                                    s.access_token.clone(),
+                                    s.user.id.clone(),
+                                    initial_meta,
+                                    cx,
+                                );
                             }
                         }
                     }
                     UserPanelEvent::BackPressed => {}
+                    UserPanelEvent::OpenOnboarding => {
+                        reset_panel = false;
+                        let handle = cx.update_global::<AppStore, _>(|app, _| app.main_window);
+                        if let Some(handle) = handle {
+                            let thread_list = this.thread_list.clone();
+                            let _ = cx.update_window(handle, |_, window, cx| {
+                                thread_list.update(cx, |thread_list, cx| {
+                                    thread_list.open_onboarding(window, cx);
+                                });
+                            });
+                        }
+                    }
+                }
+                if reset_panel {
+                    this.active_tab_index = 0;
+                    cx.update_global(|app: &mut AppStore, _| {
+                        app.main_overlay = MainOverlay::None;
+                    });
+                }
+                cx.notify();
+            });
+
+        let _mini_app_subscription =
+            cx.subscribe(&mini_app, move |_this, _, event: &MiniAppEvent, cx| {
+                match event {
+                    MiniAppEvent::BackPressed => {
+                        cx.update_global(|app: &mut AppStore, _| {
+                            app.main_overlay = MainOverlay::None;
+                        });
+                    }
                 }
                 cx.notify();
             });
@@ -294,7 +506,12 @@ impl MiniPiApp {
         Self {
             thread_list,
             user_panel,
+            mini_app,
+            skills_panel,
+            active_tab_index: 0,
+            pinned: false,
             _user_panel_subscription,
+            _mini_app_subscription,
         }
     }
 }
@@ -302,57 +519,161 @@ impl MiniPiApp {
 impl gpui::Render for MiniPiApp {
     fn render(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        let theme = cx.theme();
-        let user_panel_active = cx.global::<AppStore>().user_panel_active;
+        let active_tab_index = self.active_tab_index;
+        let main_overlay = cx.global::<AppStore>().main_overlay;
+
+        let dialog_layer = Root::render_dialog_layer(window, cx);
+        let notification_layer = Root::render_notification_layer(window, cx);
+        let sheet_layer = Root::render_sheet_layer(window, cx);
 
         gpui::div()
             .flex()
             .flex_col()
             .size_full()
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            .font_family(theme.font_family.clone())
+            .relative()
             .child(
                 TitleBar::new()
                     .child(
-                        gpui::div().flex().items_center().gap_2().child(
-                            gpui::div()
-                                .text_size(px(13.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child("Mini Pi"),
-                        ),
+                        TabBar::new("app-tabs")
+                            .mt(px(1.))
+                            .segmented()
+                            .px_0()
+                            .py(px(2.))
+                            .bg(cx.theme().title_bar)
+                            .flex_1()
+                            .selected_index(active_tab_index)
+                            .on_click(cx.listener(|this, ix: &usize, window, cx| {
+                                this.set_active_tab(*ix, window, cx);
+                            }))
+                            .child(Tab::new().label("Mini Pi"))
+                            .child(Tab::new().label("Skills")),
                     )
                     .child(
-                        gpui::div().flex().items_center().pr_2().child(
-                            Button::new("user-menu")
-                                .with_size(gpui_component::Size::Small)
-                                .custom(
-                                    ButtonCustomVariant::new(cx)
-                                        .color(cx.theme().transparent)
-                                        .foreground(gpui::rgb(0x888888).into())
-                                        .hover(gpui::rgb(0x333333).into())
-                                        .active(gpui::rgb(0x444444).into()),
-                                )
-                                .icon(
-                                    Icon::empty()
-                                        .path("account.svg")
-                                        .text_color(gpui::rgb(0x888888)),
-                                )
-                                .on_click(move |_, _, cx| {
-                                    cx.update_global(|app: &mut AppStore, _| {
-                                        app.user_panel_active = !app.user_panel_active;
-                                    });
-                                }),
-                        ),
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .px_2()
+                            .gap_2()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .child(self.pin_button(cx))
+                            .child(Self::mini_app_button(cx))
+                            .child(Self::user_menu_button(cx)),
                     ),
             )
-            .child(if user_panel_active {
-                self.user_panel.clone().into_any_element()
-            } else {
-                self.thread_list.clone().into_any_element()
-            })
+            .child(
+                gpui::div()
+                    .id("tab-content")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .overflow_hidden()
+                    .map(|this| match main_overlay {
+                        MainOverlay::UserPanel => this.child(self.user_panel.clone()),
+                        MainOverlay::MiniApp => this.child(self.mini_app.clone()),
+                        MainOverlay::None => match MiniPiTab::from_index(active_tab_index) {
+                            MiniPiTab::Threads => this.child(self.thread_list.clone()),
+                            MiniPiTab::Skills => this.child(self.skills_panel.clone()),
+                        },
+                    }),
+            )
+            .children(dialog_layer)
+            .children(notification_layer)
+            .children(sheet_layer)
+    }
+}
+
+impl MiniPiApp {
+    fn pin_button(&mut self, cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        let pinned = self.pinned;
+        Button::new("pin")
+            .with_size(gpui_component::Size::Small)
+            .ghost()
+            .icon(
+                Icon::empty()
+                    .path(if pinned {
+                        "icons/unpin.svg"
+                    } else {
+                        "icons/pin.svg"
+                    })
+                    .text_color(if pinned {
+                        gpui::rgb(0x4f46e5)
+                    } else {
+                        gpui::rgb(0x888888)
+                    }),
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.pinned = !this.pinned;
+                crate::utils::window_helpers::set_window_level(window, this.pinned);
+                cx.notify();
+            }))
+    }
+
+    fn mini_app_button(cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        let active = cx.global::<AppStore>().main_overlay == MainOverlay::MiniApp;
+        Button::new("mini-app")
+            .with_size(gpui_component::Size::Small)
+            .ghost()
+            .icon(
+                Icon::empty()
+                    .path("icons/layout-grid.svg")
+                    .text_color(if active {
+                        gpui::rgb(0x4f46e5)
+                    } else {
+                        gpui::rgb(0x888888)
+                    }),
+            )
+            .on_click(cx.listener(|_this, _, _, cx| {
+                cx.update_global(|app: &mut AppStore, _| {
+                    app.main_overlay = if app.main_overlay == MainOverlay::MiniApp {
+                        MainOverlay::None
+                    } else {
+                        MainOverlay::MiniApp
+                    };
+                });
+                cx.notify();
+            }))
+    }
+
+    fn user_menu_button(cx: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+        let active = cx.global::<AppStore>().main_overlay == MainOverlay::UserPanel;
+        Button::new("user-menu")
+            .with_size(gpui_component::Size::Small)
+            .ghost()
+            .icon(
+                Icon::empty()
+                    .path("icons/account.svg")
+                    .text_color(if active {
+                        gpui::rgb(0x4f46e5)
+                    } else {
+                        gpui::rgb(0x888888)
+                    }),
+            )
+            .on_click(cx.listener(|_this, _, _, cx| {
+                cx.update_global(|app: &mut AppStore, _| {
+                    app.main_overlay = if app.main_overlay == MainOverlay::UserPanel {
+                        MainOverlay::None
+                    } else {
+                        MainOverlay::UserPanel
+                    };
+                });
+                cx.notify();
+            }))
+    }
+
+    fn set_active_tab(&mut self, index: usize, _window: &mut Window, cx: &mut gpui::Context<Self>) {
+        self.active_tab_index = index;
+        cx.update_global(|app: &mut AppStore, _| {
+            app.main_overlay = MainOverlay::None;
+        });
+        if let MiniPiTab::Skills = MiniPiTab::from_index(index) {
+            self.skills_panel.update(cx, |panel, cx| {
+                panel.load_if_needed(cx);
+            });
+        }
+        cx.notify();
     }
 }

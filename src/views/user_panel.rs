@@ -1,32 +1,37 @@
-use std::time::Duration;
-
 use gpui::{
-    AppContext, BorrowAppContext, ClipboardItem, Context, EventEmitter, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
-    div, prelude::FluentBuilder, px, rgb,
+    Action, Anchor, AppContext, BorrowAppContext, ClipboardItem, Context, EventEmitter,
+    InteractiveElement, IntoElement, ParentElement, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px, rgb,
 };
 
 use crate::auth::state::{self, AuthState};
 use crate::auth::supabase;
-use crate::core::app::AppStore;
+use crate::config::app_config::{DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, FontSizePreset};
+use crate::core::actions::{About, OpenPiSettingsWindow};
+use crate::core::app::{AppStore, apply_font_size};
 use crate::remote::RemoteStatus;
 use crate::remote::cloudflared;
 use crate::remote::controller::TunnelLog;
 use crate::remote::qr::qr_image_source;
 use crate::sync::settings_sync;
-use crate::ui::input::TextInput;
-use crate::ui::toast::Toast;
+use crate::views::auth_dialog::{AuthDialogMode, AuthDialogView};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::input::{Input, InputState};
+use gpui_component::notification::Notification;
+use gpui_component::scroll::Scrollbar;
+use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
+use gpui_component::switch::Switch;
+use gpui_component::theme::{Theme, ThemeRegistry};
+use gpui_component::{
+    ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, Size, WindowExt as _,
+    popover::Popover,
+};
 
 #[derive(Clone)]
 pub enum UserPanelEvent {
     BackPressed,
     AuthStateChanged,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum AuthDialog {
-    Login,
-    Signup,
+    OpenOnboarding,
 }
 
 #[derive(Clone)]
@@ -41,54 +46,51 @@ struct StatusLogTooltip {
 }
 
 impl Render for StatusLogTooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .max_w(px(320.))
             .px_3()
             .py_2()
             .rounded_md()
-            .bg(rgb(0x2a2a2a))
+            .bg(cx.theme().popover)
             .border_1()
-            .border_color(rgb(0x444444))
+            .border_color(cx.theme().border)
             .text_xs()
-            .text_color(rgb(0xe5e5e5))
+            .text_color(cx.theme().popover_foreground)
             .whitespace_normal()
             .child(self.text.clone())
     }
 }
 
 pub struct UserPanel {
-    pub email_input: gpui::Entity<TextInput>,
-    pub password_input: gpui::Entity<TextInput>,
-    pub confirm_password_input: gpui::Entity<TextInput>,
-    pub auth_error: Option<String>,
-    pub auth_dialog: Option<AuthDialog>,
     pub cloudflared_dialog: Option<CloudflaredDialog>,
-    pub toast: gpui::Entity<Toast>,
-    pub _email_sub: gpui::Subscription,
-    pub _password_sub: gpui::Subscription,
-    pub _confirm_password_sub: gpui::Subscription,
+    pub font_size_dropdown: gpui::Entity<SelectState<SearchableVec<FontSizePreset>>>,
+    pub bearer_token_input: gpui::Entity<InputState>,
+    pub token_popover_open: bool,
     pub _remote_sub: Option<gpui::Subscription>,
-    pub _toast_sub: gpui::Subscription,
+    pub _font_size_dropdown_sub: gpui::Subscription,
+    pub scroll_handle: ScrollHandle,
+}
+
+impl SelectItem for FontSizePreset {
+    type Value = FontSizePreset;
+
+    fn title(&self) -> SharedString {
+        match self {
+            FontSizePreset::Small => "Small",
+            FontSizePreset::Medium => "Medium",
+            FontSizePreset::Large => "Large",
+        }
+        .into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        self
+    }
 }
 
 impl UserPanel {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        let email_input = cx.new(|cx| TextInput::new(cx, "Email"));
-        let password_input = cx.new(|cx| TextInput::new(cx, "Password").with_password_mode());
-        let confirm_password_input =
-            cx.new(|cx| TextInput::new(cx, "Confirm Password").with_password_mode());
-
-        let _email_sub = cx.observe(&email_input, |_, _, cx| {
-            cx.notify();
-        });
-        let _password_sub = cx.observe(&password_input, |_, _, cx| {
-            cx.notify();
-        });
-        let _confirm_password_sub = cx.observe(&confirm_password_input, |_, _, cx| {
-            cx.notify();
-        });
-
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let remote_controller = cx.global::<AppStore>().remote_controller.clone();
         let remote_sub = remote_controller.as_ref().map(|controller| {
             cx.observe(controller, |_this, _controller, cx| {
@@ -96,24 +98,37 @@ impl UserPanel {
             })
         });
 
-        let toast = cx.new(|_| Toast::new(""));
-        let _toast_sub = cx.observe(&toast, |_this, _toast, cx| {
-            cx.notify();
-        });
+        let presets = vec![
+            FontSizePreset::Small,
+            FontSizePreset::Medium,
+            FontSizePreset::Large,
+        ];
+        let initial_preset = cx.global::<AppStore>().config.font_size;
+        let initial_index = presets
+            .iter()
+            .position(|p| *p == initial_preset)
+            .map(|row| IndexPath::default().row(row));
+        let font_size_dropdown =
+            cx.new(|cx| SelectState::new(SearchableVec::new(presets), initial_index, window, cx));
+        let _font_size_dropdown_sub = cx.subscribe(
+            &font_size_dropdown,
+            |_this, _dropdown, event: &SelectEvent<SearchableVec<FontSizePreset>>, cx| {
+                if let SelectEvent::Confirm(Some(preset)) = event {
+                    apply_font_size(*preset, cx);
+                }
+            },
+        );
+        let bearer_token_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Cloudflare bearer token"));
 
         Self {
-            email_input,
-            password_input,
-            confirm_password_input,
-            auth_error: None,
-            auth_dialog: None,
             cloudflared_dialog: None,
-            toast,
-            _email_sub,
-            _password_sub,
-            _confirm_password_sub,
+            font_size_dropdown,
+            bearer_token_input,
+            token_popover_open: false,
             _remote_sub: remote_sub,
-            _toast_sub,
+            _font_size_dropdown_sub,
+            scroll_handle: ScrollHandle::new(),
         }
     }
 
@@ -131,12 +146,12 @@ impl UserPanel {
                             cx.update_global(|app: &mut AppStore, _| app.remote_controller.clone());
                         if let Some(controller) = controller {
                             let command = path.to_string_lossy().to_string();
-                            controller.update(cx, |c, cx| {
+                            controller.update(cx, |c, _cx| {
                                 c.config.cloudflared.command = command;
-                                c.set_enabled(true, cx);
                             });
                         }
                         this.cloudflared_dialog = None;
+                        this.enable_remote_control(cx);
                     }
                     Err(e) => {
                         this.cloudflared_dialog = Some(CloudflaredDialog::Error(e));
@@ -147,26 +162,68 @@ impl UserPanel {
         })
         .detach();
     }
+
+    /// Enables remote control if cloudflared is available.
+    /// Otherwise prompts to download/install it first.
+    /// Uses the current value of the bearer-token input (which may be empty).
+    fn enable_remote_control(&mut self, cx: &mut Context<Self>) {
+        eprintln!("[user_panel] enable_remote_control called");
+        let controller = match cx.global::<AppStore>().remote_controller.clone() {
+            Some(c) => c,
+            None => {
+                eprintln!("[user_panel] enable_remote_control: remote_controller is None");
+                return;
+            }
+        };
+
+        let command = controller.read(cx).config.cloudflared.command.clone();
+        eprintln!("[user_panel] enable_remote_control: command={}", command);
+        if let Err(e) = cloudflared::resolve_cloudflared_command(&command) {
+            eprintln!(
+                "[user_panel] enable_remote_control: cloudflared not resolved: {}",
+                e
+            );
+            self.cloudflared_dialog = Some(CloudflaredDialog::Prompt);
+            cx.notify();
+            return;
+        }
+
+        eprintln!("[user_panel] enable_remote_control: enabling with current token");
+        let token = self.bearer_token_input.read(cx).value().to_string();
+        controller.update(cx, |c, cx| {
+            if token.is_empty() {
+                c.config.cloudflared.bearer_token = None;
+            } else {
+                c.config.cloudflared.bearer_token = Some(token);
+            }
+            c.save_config(cx);
+            c.set_enabled(true, cx);
+        });
+        cx.notify();
+    }
 }
 
 impl EventEmitter<UserPanelEvent> for UserPanel {}
 
 impl Render for UserPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let auth = cx.global::<AppStore>().auth.clone();
-        if auth.is_logged_in() && self.auth_dialog.is_some() {
-            self.auth_dialog = None;
-        }
 
-        let email_val = self.email_input.read(cx).content().clone();
-        let password_val = self.password_input.read(cx).content().clone();
-        let is_logging_in = matches!(auth, AuthState::LoggingIn);
-        let error_msg: Option<SharedString> = self.auth_error.clone().map(|s| s.into());
+        let header = div()
+            .id("user-panel-header")
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .px_6()
+            .py_4()
+            .child(render_back_button(cx));
 
         let content = div()
             .id("user-panel-content")
             .flex_1()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
             .flex()
             .flex_col()
             .items_center()
@@ -174,241 +231,34 @@ impl Render for UserPanel {
             .py_8()
             .gap_6()
             .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .child(render_back_button(cx)),
-            )
-            .child(
                 gpui::svg()
-                    .path("logo.svg")
+                    .path("icons/pi.svg")
                     .size(px(48.))
-                    .text_color(rgb(0x6366f1)),
+                    .text_color(cx.theme().primary),
             )
-            .child(render_auth_content(self, &auth, cx));
+            .child(render_auth_content(self, &auth, window, cx));
 
-        if let Some(dialog) = self.auth_dialog {
-            let confirm_password_val = self.confirm_password_input.read(cx).content().clone();
-
-            let (title, subtitle): (SharedString, SharedString) = match dialog {
-                AuthDialog::Login => (
-                    "Sign In".into(),
-                    "Sign in to sync your agent settings across devices".into(),
-                ),
-                AuthDialog::Signup => (
-                    "Create Account".into(),
-                    "Sign up to sync your agent settings across devices".into(),
-                ),
-            };
-
-            let form_fields = div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .child(render_email_field(self))
-                .child(render_password_field(self))
-                .when(dialog == AuthDialog::Signup, |el: gpui::Div| {
-                    el.child(render_confirm_password_field(self))
-                })
-                .when(error_msg.is_some(), |el: gpui::Div| {
-                    el.child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(0xfca5a5))
-                            .child(error_msg.unwrap_or_default()),
-                    )
-                })
-                .when(is_logging_in, |el: gpui::Div| {
-                    el.child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px_4()
-                            .py_3()
-                            .rounded_lg()
-                            .bg(rgb(0x4f46e5))
-                            .text_color(rgb(0xffffff))
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Signing in..."),
-                    )
-                })
-                .when(
-                    !is_logging_in && dialog == AuthDialog::Login,
-                    |el: gpui::Div| {
-                        el.child(render_login_button(
-                            email_val.clone(),
-                            password_val.clone(),
-                            cx,
-                        ))
-                    },
-                )
-                .when(
-                    !is_logging_in && dialog == AuthDialog::Signup,
-                    |el: gpui::Div| {
-                        el.child(render_signup_submit_button(
-                            email_val.clone(),
-                            password_val.clone(),
-                            confirm_password_val.clone(),
-                            cx,
-                        ))
-                    },
-                );
-
-            div()
-                .id("user-panel")
-                .flex()
-                .flex_col()
-                .size_full()
-                .relative()
-                .child(content)
-                .child(
-                    div()
-                        .id("auth-dialog-overlay")
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full()
-                        .bg(gpui::rgba(0x00000099))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.auth_dialog = None;
-                            this.auth_error = None;
-                            cx.notify();
-                        }))
-                        .child(
-                            div()
-                                .id("auth-dialog-card")
-                                .mx_8()
-                                .w(px(360.))
-                                .flex()
-                                .flex_col()
-                                .gap_4()
-                                .px_6()
-                                .py_6()
-                                .rounded_xl()
-                                .bg(rgb(0x1f1f1f))
-                                .border_1()
-                                .border_color(rgb(0x333333))
-                                .on_click(|_, _, cx| {
-                                    cx.stop_propagation();
-                                })
-                                .child(
-                                    div()
-                                        .text_xl()
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(rgb(0xe0e0e0))
-                                        .child(title),
-                                )
-                                .child(div().text_sm().text_color(rgb(0x888888)).child(subtitle))
-                                .child(form_fields)
-                                .child(
-                                    div()
-                                        .id("auth-dialog-close-btn")
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .px_4()
-                                        .py_2()
-                                        .rounded_lg()
-                                        .bg(rgb(0x252525))
-                                        .border_1()
-                                        .border_color(rgb(0x444444))
-                                        .cursor_pointer()
-                                        .text_color(rgb(0x888888))
-                                        .text_sm()
-                                        .hover(|style| style.bg(rgb(0x333333)))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.auth_dialog = None;
-                                            this.auth_error = None;
-                                            cx.notify();
-                                        }))
-                                        .child("Cancel"),
-                                )
-                                .when(!is_logging_in && dialog == AuthDialog::Login, |el| {
-                                    el.child(
-                                        div()
-                                            .id("switch-to-signup")
-                                            .w_full()
-                                            .flex()
-                                            .flex_row()
-                                            .justify_end()
-                                            .cursor_pointer()
-                                            .text_color(rgb(0x6366f1))
-                                            .text_xs()
-                                            .hover(|style| style.text_color(rgb(0x818cf8)))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.auth_error = None;
-                                                this.auth_dialog = Some(AuthDialog::Signup);
-                                                cx.notify();
-                                            }))
-                                            .child("Create Account"),
-                                    )
-                                })
-                                .when(!is_logging_in && dialog == AuthDialog::Signup, |el| {
-                                    el.child(
-                                        div()
-                                            .id("switch-to-login")
-                                            .w_full()
-                                            .flex()
-                                            .flex_row()
-                                            .justify_end()
-                                            .cursor_pointer()
-                                            .text_color(rgb(0x6366f1))
-                                            .text_xs()
-                                            .hover(|style| style.text_color(rgb(0x818cf8)))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.auth_error = None;
-                                                this.auth_dialog = Some(AuthDialog::Login);
-                                                cx.notify();
-                                            }))
-                                            .child("Sign In"),
-                                    )
-                                }),
-                        ),
-                )
-                .when(self.cloudflared_dialog.is_some(), |this| {
-                    this.child(render_cloudflared_dialog(self, cx))
-                })
-                .when(self.toast.read(cx).visible, |this| {
-                    this.child(render_toast_overlay(self, cx))
-                })
-        } else {
-            div()
-                .id("user-panel")
-                .flex()
-                .flex_col()
-                .size_full()
-                .relative()
-                .child(content)
-                .when(self.cloudflared_dialog.is_some(), |this| {
-                    this.child(render_cloudflared_dialog(self, cx))
-                })
-                .when(self.toast.read(cx).visible, |this| {
-                    this.child(render_toast_overlay(self, cx))
-                })
-        }
+        div()
+            .id("user-panel")
+            .flex()
+            .flex_col()
+            .size_full()
+            .relative()
+            .child(header)
+            .child(content)
+            .child(
+                div()
+                    .absolute()
+                    .top(px(0.))
+                    .right(px(0.))
+                    .bottom(px(0.))
+                    .w(px(12.))
+                    .child(Scrollbar::vertical(&self.scroll_handle)),
+            )
+            .when(self.cloudflared_dialog.is_some(), |this| {
+                this.child(render_cloudflared_dialog(self, cx))
+            })
     }
-}
-
-fn render_toast_overlay(panel: &UserPanel, _cx: &mut Context<UserPanel>) -> impl IntoElement {
-    div()
-        .absolute()
-        .top(px(48.))
-        .left(px(0.))
-        .right(px(0.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .child(panel.toast.clone())
 }
 
 fn render_cloudflared_dialog(
@@ -471,9 +321,9 @@ fn render_cloudflared_dialog(
                 .px_6()
                 .py_6()
                 .rounded_xl()
-                .bg(rgb(0x1f1f1f))
+                .bg(cx.theme().secondary)
                 .border_1()
-                .border_color(rgb(0x333333))
+                .border_color(cx.theme().border)
                 .on_click(|_, _, cx| {
                     cx.stop_propagation();
                 })
@@ -481,12 +331,17 @@ fn render_cloudflared_dialog(
                     div()
                         .text_xl()
                         .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(0xe0e0e0))
+                        .text_color(cx.theme().foreground)
                         .child(title),
                 )
-                .child(div().text_sm().text_color(rgb(0x888888)).child(body))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(body),
+                )
                 .when_some(error_msg, |this, err| {
-                    this.child(div().text_xs().text_color(rgb(0xfca5a5)).child(err))
+                    this.child(div().text_xs().text_color(cx.theme().danger).child(err))
                 })
                 .child(
                     div()
@@ -494,65 +349,67 @@ fn render_cloudflared_dialog(
                         .flex_row()
                         .gap_3()
                         .child(
-                            div()
-                                .id("cloudflared-download-btn")
-                                .flex_1()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .px_4()
-                                .py_2()
-                                .rounded_lg()
-                                .bg(if is_downloading {
-                                    rgb(0x333333)
-                                } else {
-                                    rgb(0x4f46e5)
-                                })
-                                .cursor_pointer()
-                                .text_color(if is_downloading {
-                                    rgb(0x888888)
-                                } else {
-                                    rgb(0xffffff)
-                                })
-                                .text_sm()
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .when(!is_downloading, |s| {
-                                    s.hover(|style| style.bg(rgb(0x6366f1)))
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.start_cloudflared_download(cx);
-                                        }))
-                                })
-                                .child(primary_label),
+                            div().flex_1().child(
+                                Button::new("cloudflared-download-btn")
+                                    .label(primary_label)
+                                    .primary()
+                                    .disabled(is_downloading)
+                                    .w_full()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.start_cloudflared_download(cx);
+                                    })),
+                            ),
                         )
                         .child(
-                            div()
-                                .id("cloudflared-cancel-btn")
-                                .flex_1()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .px_4()
-                                .py_2()
-                                .rounded_lg()
-                                .bg(rgb(0x252525))
-                                .border_1()
-                                .border_color(rgb(0x444444))
-                                .cursor_pointer()
-                                .text_color(rgb(0x888888))
-                                .text_sm()
-                                .hover(|style| style.bg(rgb(0x333333)))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.cloudflared_dialog = None;
-                                    cx.notify();
-                                }))
-                                .child("Cancel"),
+                            div().flex_1().child(
+                                Button::new("cloudflared-cancel-btn")
+                                    .label("Cancel")
+                                    .w_full()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cloudflared_dialog = None;
+                                        cx.notify();
+                                    })),
+                            ),
                         ),
                 ),
         )
 }
 
-fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElement {
+fn render_token_popover(panel: &mut UserPanel, cx: &mut Context<UserPanel>) -> impl IntoElement {
+    let input = panel.bearer_token_input.clone();
+    div()
+        .id("remote-token-popover")
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .px_4()
+        .py_4()
+        .rounded_lg()
+        .bg(cx.theme().secondary)
+        .border_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .text_sm()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(cx.theme().foreground)
+                .child("Cloudflare bearer token"),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("Enter a Cloudflare API token for this tunnel session, or leave empty."),
+        )
+        .child(Input::new(&input).w_full())
+}
+
+fn render_remote_control_section(
+    panel: &mut UserPanel,
+    _window: &mut Window,
+    cx: &mut Context<UserPanel>,
+) -> impl IntoElement {
     let Some(controller) = cx.global::<AppStore>().remote_controller.clone() else {
         return div();
     };
@@ -575,10 +432,10 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
         RemoteStatus::Error(e) => format!("Error: {}", e).into(),
     };
     let status_color = match &status {
-        RemoteStatus::Running => rgb(0x22c55e),
-        RemoteStatus::Error(_) => rgb(0xef4444),
-        RemoteStatus::Reconnecting => rgb(0xf59e0b),
-        _ => rgb(0x888888),
+        RemoteStatus::Running => cx.theme().success,
+        RemoteStatus::Error(_) => cx.theme().danger,
+        RemoteStatus::Reconnecting => cx.theme().warning,
+        _ => cx.theme().muted_foreground,
     };
 
     let mut section = div()
@@ -591,7 +448,7 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                 .px_2()
                 .py_1()
                 .text_xs()
-                .text_color(rgb(0x888888))
+                .text_color(cx.theme().muted_foreground)
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .child("REMOTE CONTROL"),
         )
@@ -604,15 +461,41 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                 .items_center()
                 .gap_3()
                 .px_4()
-                .py_3()
+                .py_2()
                 .rounded_lg()
-                .bg(rgb(0x252525))
+                .bg(cx.theme().secondary)
                 .child(
                     div()
                         .flex_1()
                         .text_sm()
-                        .text_color(rgb(0xe0e0e0))
+                        .text_color(cx.theme().foreground)
                         .child("Enable remote control"),
+                )
+                .child(
+                    Popover::new("remote-token-popover")
+                        .open(panel.token_popover_open)
+                        .on_open_change(cx.listener(|this, open, _, cx| {
+                            this.token_popover_open = *open;
+                            cx.notify();
+                        }))
+                        .anchor(Anchor::TopCenter)
+                        .w(px(240.))
+                        .trigger(
+                            Button::new("remote-token-icon")
+                                .with_size(Size::Small)
+                                .ghost()
+                                .icon(
+                                    Icon::empty()
+                                        .path("icons/exclamation.svg")
+                                        .size(px(16.))
+                                        .text_color(if panel.token_popover_open {
+                                            cx.theme().primary
+                                        } else {
+                                            cx.theme().muted_foreground
+                                        }),
+                                ),
+                        )
+                        .child(render_token_popover(panel, cx)),
                 )
                 .child(
                     div()
@@ -621,9 +504,9 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                         .h(px(24.))
                         .rounded_full()
                         .bg(if enabled {
-                            rgb(0x6366f1)
+                            cx.theme().primary
                         } else {
-                            rgb(0x444444)
+                            cx.theme().muted
                         })
                         .when(!is_busy, |s| s.cursor_pointer())
                         .when(is_busy, |s| s.opacity(0.6))
@@ -639,18 +522,22 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                         )
                         .when(!is_busy, |s| {
                             s.on_click(cx.listener(move |this, _, _, cx| {
+                                eprintln!(
+                                    "[user_panel] remote toggle clicked, is_busy={}",
+                                    is_busy
+                                );
                                 if let Some(controller) =
                                     cx.global::<AppStore>().remote_controller.clone()
                                 {
                                     let enabled = controller.read(cx).is_enabled();
-                                    if !enabled
-                                        && !cloudflared::app_data_cloudflared_path().exists()
-                                    {
-                                        this.cloudflared_dialog = Some(CloudflaredDialog::Prompt);
-                                        cx.notify();
-                                        return;
+                                    eprintln!("[user_panel] current enabled={}", enabled);
+                                    if enabled {
+                                        controller.update(cx, |c, cx| c.set_enabled(false, cx));
+                                    } else {
+                                        this.enable_remote_control(cx);
                                     }
-                                    controller.update(cx, |c, cx| c.set_enabled(!enabled, cx));
+                                } else {
+                                    eprintln!("[user_panel] remote_controller is None");
                                 }
                             }))
                         }),
@@ -667,8 +554,13 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                 .px_4()
                 .py_2()
                 .rounded_lg()
-                .bg(rgb(0x252525))
-                .child(div().text_xs().text_color(rgb(0x888888)).child("Status"))
+                .bg(cx.theme().secondary)
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Status"),
+                )
                 .child(div().flex_1())
                 .child(
                     div()
@@ -679,9 +571,9 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                         .child(div().text_xs().text_color(status_color).child(status_text))
                         .when_some(tunnel_log.clone(), |this, log: TunnelLog| {
                             let icon_color = match log.level.as_str() {
-                                "ERR" => rgb(0xfca5a5),
-                                "WRN" => rgb(0xfbbf24),
-                                _ => rgb(0x888888),
+                                "ERR" => cx.theme().danger,
+                                "WRN" => cx.theme().warning,
+                                _ => cx.theme().muted_foreground,
                             };
                             let tooltip_text = format!("[{}] {}", log.level, log.message);
                             this.child(
@@ -693,7 +585,7 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                                     .size(px(16.))
                                     .child(
                                         gpui::svg()
-                                            .path("exclamation.svg")
+                                            .path("icons/exclamation.svg")
                                             .size(px(14.))
                                             .text_color(icon_color),
                                     )
@@ -725,7 +617,7 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                 .px_4()
                 .py_4()
                 .rounded_lg()
-                .bg(rgb(0x252525))
+                .bg(cx.theme().secondary)
                 .child(
                     div()
                         .w_full()
@@ -735,71 +627,41 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                         .justify_center()
                         .gap_1()
                         .text_xs()
-                        .text_color(rgb(0x888888))
+                        .text_color(cx.theme().muted_foreground)
                         .child("Scan with ")
                         .child(
-                            div()
-                                .id("pi-commander-link")
-                                .text_color(rgb(0x6366f1))
-                                .cursor_pointer()
-                                .hover(|style| style.text_color(rgb(0x818cf8)))
+                            Button::new("pi-commander-link")
+                                .label("pi-commander")
+                                .with_size(Size::Small)
+                                .link()
                                 .on_click(cx.listener(move |_this, _, _, cx| {
                                     cx.open_url(&pi_commander_for_open);
-                                }))
-                                .child("pi-commander"),
+                                })),
                         ),
                 )
                 .child(div().id("remote-qr-code").when_some(qr, |this, source| {
                     this.child(gpui::img(source).size(px(160.)))
                 }))
                 .child(
-                    div()
-                        .id("remote-tunnel-url")
+                    Button::new("remote-tunnel-url")
                         .w_full()
-                        .px_3()
-                        .py_2()
-                        .rounded_lg()
-                        .bg(rgb(0x1f1f1f))
-                        .border_1()
-                        .border_color(rgb(0x333333))
-                        .cursor_pointer()
-                        .hover(|style| style.bg(rgb(0x2a2a2a)).border_color(rgb(0x444444)))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                        .with_size(Size::Small)
+                        .icon(
+                            Icon::empty()
+                                .path("icons/clipboard.svg")
+                                .size(px(14.))
+                                .text_color(cx.theme().muted_foreground),
+                        )
+                        .label(tunnel_for_display)
+                        .on_click(cx.listener(move |_, _, window, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(
                                 tunnel_for_text_copy.clone(),
                             ));
-                            this.toast.update(cx, |toast, cx| {
-                                toast.set_message("URL copied to clipboard");
-                                toast.show_for(Duration::from_secs(3), cx);
-                            });
-                            cx.notify();
-                        }))
-                        .child(
-                            div()
-                                .w_full()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .justify_center()
-                                .gap_2()
-                                .child(
-                                    gpui::svg()
-                                        .path("clipboard.svg")
-                                        .size(px(14.))
-                                        .text_color(rgb(0x888888)),
-                                )
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w(px(0.))
-                                        .overflow_x_hidden()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .text_xs()
-                                        .text_color(rgb(0xcccccc))
-                                        .child(tunnel_for_display),
-                                ),
-                        ),
+                            window.push_notification(
+                                Notification::success("URL copied to clipboard"),
+                                cx,
+                            );
+                        })),
                 ),
         );
     }
@@ -813,19 +675,19 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
                 .flex_col()
                 .gap_2()
                 .px_4()
-                .py_3()
+                .py_2()
                 .rounded_lg()
-                .bg(rgb(0x2a1a1a))
+                .bg(cx.theme().secondary)
                 .border_1()
-                .border_color(rgb(0x7f1d1d))
+                .border_color(cx.theme().danger)
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0xfca5a5))
+                        .text_color(cx.theme().danger)
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child("Remote control failed"),
                 )
-                .child(div().text_xs().text_color(rgb(0xfca5a5)).child(err)),
+                .child(div().text_xs().text_color(cx.theme().danger).child(err)),
         );
     }
 
@@ -833,30 +695,30 @@ fn render_remote_control_section(cx: &mut Context<UserPanel>) -> impl IntoElemen
 }
 
 fn render_back_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
-    div()
-        .id("back-button")
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(32.))
-        .rounded_full()
-        .bg(rgb(0x252525))
-        .cursor_pointer()
-        .child(
-            gpui::svg()
-                .path("arrow-left.svg")
-                .size(px(16.))
-                .text_color(rgb(0x888888)),
+    Button::new("back-button")
+        .with_size(Size::Large)
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .color(cx.theme().secondary.into())
+                .foreground(cx.theme().muted_foreground.into())
+                .hover(cx.theme().secondary_hover.into())
+                .active(cx.theme().secondary_active.into()),
         )
-        .hover(|style| style.bg(rgb(0x333333)))
+        .icon(
+            Icon::empty()
+                .path("icons/arrow-left.svg")
+                .size(px(16.))
+                .text_color(cx.theme().muted_foreground),
+        )
         .on_click(cx.listener(|_this, _, _, cx| {
             cx.emit(UserPanelEvent::BackPressed);
         }))
 }
 
 fn render_auth_content(
-    _panel: &UserPanel,
+    panel: &mut UserPanel,
     auth: &AuthState,
+    window: &mut Window,
     cx: &mut Context<UserPanel>,
 ) -> impl IntoElement {
     match auth {
@@ -894,9 +756,9 @@ fn render_auth_content(
                         .justify_center()
                         .size(px(80.))
                         .rounded_full()
-                        .bg(rgb(0x6366f1))
+                        .bg(rgb(0x2BCF13))
                         .border_3()
-                        .border_color(rgb(0x4f46e5))
+                        .border_color(rgb(0x1fa824))
                         .text_color(rgb(0xffffff))
                         .text_size(px(28.))
                         .font_weight(gpui::FontWeight::BOLD)
@@ -911,14 +773,14 @@ fn render_auth_content(
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(rgb(0xe0e0e0))
+                                .text_color(cx.theme().foreground)
                                 .overflow_x_hidden()
                                 .child(user.email.clone()),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0x888888))
+                                .text_color(cx.theme().muted_foreground)
                                 .child("Authenticated"),
                         ),
                 )
@@ -931,17 +793,22 @@ fn render_auth_content(
                             .items_center()
                             .gap_1()
                             .px_4()
-                            .py_3()
+                            .py_2()
                             .rounded_lg()
-                            .bg(rgb(0x252525))
+                            .bg(cx.theme().secondary)
                             .child(
                                 div()
                                     .text_lg()
                                     .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(rgb(0xe0e0e0))
+                                    .text_color(cx.theme().foreground)
                                     .child(threads_count.to_string()),
                             )
-                            .child(div().text_xs().text_color(rgb(0x888888)).child("Threads")),
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Threads"),
+                            ),
                     ),
                 )
                 .child(
@@ -955,14 +822,14 @@ fn render_auth_content(
                                 .px_2()
                                 .py_1()
                                 .text_xs()
-                                .text_color(rgb(0x888888))
+                                .text_color(cx.theme().muted_foreground)
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .child("SYNC"),
                         )
-                        .child(sync_row("Agent Settings", &sync_label))
+                        .child(sync_row("Agent Settings", &sync_label, cx))
                         .child(render_sync_button(cx)),
                 )
-                .child(render_remote_control_section(cx))
+                .child(render_remote_control_section(panel, window, cx))
                 .child(
                     div()
                         .w_full()
@@ -974,15 +841,31 @@ fn render_auth_content(
                                 .px_2()
                                 .py_1()
                                 .text_xs()
-                                .text_color(rgb(0x888888))
+                                .text_color(cx.theme().muted_foreground)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child("PI SETTINGS"),
+                        )
+                        .child(render_pi_settings_row(cx))
+                        .child(render_onboarding_row(cx)),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .child("SETTINGS"),
                         )
-                        .child(settings_row("Account", "account.svg"))
-                        .child(settings_row("Notifications", "notifications.svg"))
-                        .child(settings_row("Appearance", "appearance.svg"))
-                        .child(settings_row("Keyboard Shortcuts", "keyboard.svg"))
-                        .child(settings_row("About", "about.svg")),
+                        .child(render_appearance_row(window, cx))
+                        .child(render_font_size_row(panel, cx))
+                        .child(render_about_row(cx)),
                 )
                 .child(render_logout_button(cx))
         }
@@ -993,41 +876,28 @@ fn render_auth_content(
             .items_center()
             .gap_6()
             .child(
-                div()
-                    .id("login-dialog-btn")
+                Button::new("login-dialog-btn")
+                    .label("Sign In")
+                    .with_size(Size::Large)
+                    .primary()
                     .w_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap_2()
-                    .px_4()
-                    .py_3()
-                    .rounded_lg()
-                    .bg(rgb(0x6366f1))
-                    .cursor_pointer()
-                    .text_color(rgb(0xffffff))
-                    .text_sm()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .hover(|style| style.bg(rgb(0x4f46e5)))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.auth_dialog = Some(AuthDialog::Login);
-                        cx.notify();
-                    }))
-                    .child(
-                        gpui::svg()
-                            .path("login.svg")
+                    .icon(
+                        Icon::empty()
+                            .path("icons/login.svg")
                             .size(px(16.))
                             .text_color(rgb(0xffffff)),
                     )
-                    .child("Sign In"),
+                    .on_click(cx.listener(|_this, _, window, cx| {
+                        AuthDialogView::open(window, &mut *cx, AuthDialogMode::Login);
+                    })),
             )
             .child(
                 div()
                     .text_xs()
-                    .text_color(rgb(0x888888))
+                    .text_color(cx.theme().muted_foreground)
                     .child("Sign in to sync your agent settings"),
             )
-            .child(render_remote_control_section(cx))
+            .child(render_remote_control_section(panel, window, cx))
             .child(
                 div()
                     .w_full()
@@ -1039,246 +909,215 @@ fn render_auth_content(
                             .px_2()
                             .py_1()
                             .text_xs()
-                            .text_color(rgb(0x888888))
+                            .text_color(cx.theme().muted_foreground)
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("PI SETTINGS"),
+                    )
+                    .child(render_pi_settings_row(cx))
+                    .child(render_onboarding_row(cx)),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child("SETTINGS"),
                     )
-                    .child(settings_row("Notifications", "notifications.svg"))
-                    .child(settings_row("Appearance", "appearance.svg"))
-                    .child(settings_row("Keyboard Shortcuts", "keyboard.svg"))
-                    .child(settings_row("About", "about.svg")),
+                    .child(render_appearance_row(window, cx))
+                    .child(render_font_size_row(panel, cx))
+                    .child(render_about_row(cx)),
             ),
     }
 }
 
-fn render_email_field(panel: &UserPanel) -> impl IntoElement {
+fn render_pi_settings_row(cx: &mut Context<UserPanel>) -> impl IntoElement {
     div()
-        .w_full()
+        .id("settings-pi-settings")
         .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(0x888888))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child("EMAIL"),
-        )
-        .child(
-            div()
-                .w_full()
-                .px_3()
-                .py_2()
-                .rounded_lg()
-                .bg(rgb(0x252525))
-                .border_1()
-                .border_color(rgb(0x444444))
-                .child(panel.email_input.clone()),
-        )
-}
-
-fn render_password_field(panel: &UserPanel) -> impl IntoElement {
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(0x888888))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child("PASSWORD"),
-        )
-        .child(
-            div()
-                .w_full()
-                .px_3()
-                .py_2()
-                .rounded_lg()
-                .bg(rgb(0x252525))
-                .border_1()
-                .border_color(rgb(0x444444))
-                .child(panel.password_input.clone()),
-        )
-}
-
-fn render_login_button(
-    email_val: SharedString,
-    password_val: SharedString,
-    cx: &mut Context<UserPanel>,
-) -> impl IntoElement {
-    div()
-        .id("login-button")
-        .w_full()
-        .flex()
+        .flex_row()
         .items_center()
-        .justify_center()
+        .gap_3()
         .px_4()
-        .py_3()
+        .py_2()
         .rounded_lg()
-        .bg(rgb(0x6366f1))
+        .bg(cx.theme().secondary)
         .cursor_pointer()
-        .text_color(rgb(0xffffff))
-        .text_sm()
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .hover(|style| style.bg(rgb(0x4f46e5)))
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.auth_error = None;
-            let email = email_val.to_string();
-            let password = password_val.to_string();
-            if email.is_empty() || password.is_empty() {
-                this.auth_error = Some("Email and password are required".to_string());
-                cx.notify();
-                return;
-            }
-            cx.update_global(|app: &mut AppStore, _| {
-                app.auth = AuthState::LoggingIn;
-            });
-            cx.notify();
-            let store = cx.global::<AppStore>().store.clone();
-            cx.spawn(async move |weak, cx| {
-                let result = smol::unblock(move || supabase::login(&email, &password)).await;
-                let _ = weak.update(cx, |this, cx| {
-                    match result {
-                        Ok(session) => {
-                            let _ = state::save_session(&store, &session);
-                            let user = session.user.clone();
-                            cx.update_global(|app: &mut AppStore, _| {
-                                app.auth = AuthState::LoggedIn(user);
-                                app.session = Some(session);
-                            });
-                            cx.emit(UserPanelEvent::AuthStateChanged);
-                        }
-                        Err(e) => {
-                            this.auth_error = Some(e.to_string());
-                            cx.update_global(|app: &mut AppStore, _| {
-                                app.auth = AuthState::LoggedOut;
-                            });
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
+        .hover(|style| style.bg(cx.theme().secondary_hover))
+        .on_click(cx.listener(|_, _, window, cx| {
+            window.dispatch_action(OpenPiSettingsWindow.boxed_clone(), cx);
         }))
-        .child("Sign In")
-}
-
-fn render_confirm_password_field(panel: &UserPanel) -> impl IntoElement {
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap_1()
         .child(
             div()
-                .text_xs()
-                .text_color(rgb(0x888888))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child("CONFIRM PASSWORD"),
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::svg()
+                        .path("icons/manage.svg")
+                        .size(px(18.))
+                        .text_color(cx.theme().muted_foreground),
+                ),
         )
         .child(
             div()
-                .w_full()
-                .px_3()
-                .py_2()
-                .rounded_lg()
-                .bg(rgb(0x252525))
-                .border_1()
-                .border_color(rgb(0x444444))
-                .child(panel.confirm_password_input.clone()),
+                .flex_1()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child("Pi Settings"),
+        )
+        .child(
+            gpui::svg()
+                .path("icons/chevron-right.svg")
+                .size(px(16.))
+                .text_color(cx.theme().muted_foreground),
         )
 }
 
-fn render_signup_submit_button(
-    email_val: SharedString,
-    password_val: SharedString,
-    confirm_password_val: SharedString,
-    cx: &mut Context<UserPanel>,
-) -> impl IntoElement {
+fn render_onboarding_row(cx: &mut Context<UserPanel>) -> impl IntoElement {
     div()
-        .id("signup-submit-button")
-        .w_full()
+        .id("settings-onboarding")
         .flex()
+        .flex_row()
         .items_center()
-        .justify_center()
+        .gap_3()
         .px_4()
-        .py_3()
+        .py_2()
         .rounded_lg()
-        .bg(rgb(0x6366f1))
+        .bg(cx.theme().secondary)
         .cursor_pointer()
-        .text_color(rgb(0xffffff))
-        .text_sm()
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .hover(|style| style.bg(rgb(0x4f46e5)))
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.auth_error = None;
-            let email = email_val.to_string();
-            let password = password_val.to_string();
-            let confirm = confirm_password_val.to_string();
-            if email.is_empty() || password.is_empty() {
-                this.auth_error = Some("Email and password are required".to_string());
-                cx.notify();
-                return;
-            }
-            if password != confirm {
-                this.auth_error = Some("Passwords do not match".to_string());
-                cx.notify();
-                return;
-            }
-            cx.update_global(|app: &mut AppStore, _| {
-                app.auth = AuthState::LoggingIn;
-            });
-            cx.notify();
-            let store = cx.global::<AppStore>().store.clone();
-            cx.spawn(async move |weak, cx| {
-                let result = smol::unblock(move || supabase::signup(&email, &password)).await;
-                let _ = weak.update(cx, |this, cx| {
-                    match result {
-                        Ok(session) => {
-                            let _ = state::save_session(&store, &session);
-                            let user = session.user.clone();
-                            cx.update_global(|app: &mut AppStore, _| {
-                                app.auth = AuthState::LoggedIn(user);
-                                app.session = Some(session);
-                            });
-                            cx.emit(UserPanelEvent::AuthStateChanged);
-                        }
-                        Err(e) => {
-                            this.auth_error = Some(e.to_string());
-                            cx.update_global(|app: &mut AppStore, _| {
-                                app.auth = AuthState::LoggedOut;
-                            });
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
+        .hover(|style| style.bg(cx.theme().secondary_hover))
+        .on_click(cx.listener(|_, _, _, cx| {
+            cx.emit(UserPanelEvent::OpenOnboarding);
         }))
-        .child("Create Account")
+        .child(
+            div()
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::svg()
+                        .path("icons/circle-check.svg")
+                        .size(px(18.))
+                        .text_color(cx.theme().muted_foreground),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child("Onboarding"),
+        )
+        .child(
+            gpui::svg()
+                .path("icons/chevron-right.svg")
+                .size(px(16.))
+                .text_color(cx.theme().muted_foreground),
+        )
+}
+
+fn render_about_row(cx: &mut Context<UserPanel>) -> impl IntoElement {
+    div()
+        .id("settings-about")
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .px_4()
+        .py_2()
+        .rounded_lg()
+        .bg(cx.theme().secondary)
+        .cursor_pointer()
+        .hover(|style| style.bg(cx.theme().secondary_hover))
+        .on_click(cx.listener(|_, _, window, cx| {
+            window.dispatch_action(About.boxed_clone(), cx);
+        }))
+        .child(
+            div()
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::svg()
+                        .path("icons/about.svg")
+                        .size(px(18.))
+                        .text_color(cx.theme().muted_foreground),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child("About"),
+        )
+        .child(
+            gpui::svg()
+                .path("icons/chevron-right.svg")
+                .size(px(16.))
+                .text_color(cx.theme().muted_foreground),
+        )
+}
+
+fn render_font_size_row(panel: &UserPanel, cx: &mut Context<UserPanel>) -> impl IntoElement {
+    div()
+        .id("settings-font-size")
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .px_4()
+        .py_2()
+        .rounded_lg()
+        .bg(cx.theme().secondary)
+        .child(
+            div()
+                .size(px(20.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::svg()
+                        .path("icons/appearance.svg")
+                        .size(px(18.))
+                        .text_color(cx.theme().muted_foreground),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child("Font Size"),
+        )
+        .child(
+            div().w(px(100.)).child(
+                Select::new(&panel.font_size_dropdown)
+                    .with_size(Size::Small)
+                    .appearance(false)
+                    .menu_width(gpui::Length::Auto),
+            ),
+        )
 }
 
 fn render_logout_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
-    div()
-        .id("logout-button")
+    Button::new("logout-button")
+        .label("Sign Out")
+        .danger()
         .w_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .px_4()
-        .py_3()
-        .mb_6()
-        .rounded_lg()
-        .bg(rgb(0x7f1d1d))
-        .cursor_pointer()
-        .text_color(rgb(0xfca5a5))
-        .text_sm()
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .hover(|style| style.bg(rgb(0x991b1b)))
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.auth_error = None;
+        .py_5()
+        .on_click(cx.listener(|_this, _, _, cx| {
             let session = cx.global::<AppStore>().session.clone();
             let store = cx.global::<AppStore>().store.clone();
             if let Some(s) = session {
@@ -1292,7 +1131,6 @@ fn render_logout_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
             cx.emit(UserPanelEvent::AuthStateChanged);
             cx.notify();
         }))
-        .child("Sign Out")
 }
 
 fn render_sync_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
@@ -1304,29 +1142,12 @@ fn render_sync_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
         "Sync Now".into()
     };
 
-    div()
-        .id("sync-button")
+    Button::new("sync-button")
+        .label(label)
         .w_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .px_4()
-        .py_3()
-        .rounded_lg()
-        .bg(if is_syncing {
-            rgb(0x333333)
-        } else {
-            rgb(0x4f46e5)
-        })
-        .cursor_pointer()
-        .text_color(if is_syncing {
-            rgb(0x888888)
-        } else {
-            rgb(0xffffff)
-        })
-        .text_sm()
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .when(!is_syncing, |el| el.hover(|style| style.bg(rgb(0x4338ca))))
+        .py_5()
+        .primary()
+        .disabled(is_syncing)
         .on_click(cx.listener(|_this, _, _, cx| {
             let session = cx.global::<AppStore>().session.clone();
             if let Some(s) = session {
@@ -1356,19 +1177,22 @@ fn render_sync_button(cx: &mut Context<UserPanel>) -> impl IntoElement {
                 .detach();
             }
         }))
-        .child(label)
 }
 
-fn sync_row(label: impl Into<SharedString>, status_label: &SharedString) -> impl IntoElement {
+fn sync_row(
+    label: impl Into<SharedString>,
+    status_label: &SharedString,
+    cx: &mut Context<UserPanel>,
+) -> impl IntoElement {
     let label: SharedString = label.into();
     let status_color = if status_label.as_ref() == "Synced" {
-        rgb(0x22c55e)
+        cx.theme().success
     } else if status_label.as_ref() == "Syncing..." {
-        rgb(0xeab308)
+        cx.theme().warning
     } else if status_label.starts_with("Error") {
-        rgb(0xef4444)
+        cx.theme().danger
     } else {
-        rgb(0x888888)
+        cx.theme().muted_foreground
     };
     div()
         .id(SharedString::from(format!(
@@ -1380,16 +1204,16 @@ fn sync_row(label: impl Into<SharedString>, status_label: &SharedString) -> impl
         .items_center()
         .gap_3()
         .px_4()
-        .py_3()
+        .py_2()
         .rounded_lg()
-        .bg(rgb(0x252525))
+        .bg(cx.theme().secondary)
         .child(
-            div()
-                .flex_1()
-                .flex()
-                .flex_row()
-                .items_center()
-                .child(div().text_sm().text_color(rgb(0xe0e0e0)).child(label)),
+            div().flex_1().flex().flex_row().items_center().child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().foreground)
+                    .child(label),
+            ),
         )
         .child(
             div()
@@ -1399,27 +1223,18 @@ fn sync_row(label: impl Into<SharedString>, status_label: &SharedString) -> impl
         )
 }
 
-fn settings_row(
-    label: impl Into<SharedString>,
-    icon_path: impl Into<SharedString>,
-) -> impl IntoElement {
-    let label: SharedString = label.into();
-    let icon_path: SharedString = icon_path.into();
+fn render_appearance_row(_window: &mut Window, cx: &mut Context<UserPanel>) -> impl IntoElement {
+    let is_dark = cx.theme().mode.is_dark();
     div()
-        .id(SharedString::from(format!(
-            "settings-{}",
-            label.to_lowercase().replace(" ", "-")
-        )))
+        .id("settings-appearance")
         .flex()
         .flex_row()
         .items_center()
         .gap_3()
         .px_4()
-        .py_3()
+        .py_2()
         .rounded_lg()
-        .bg(rgb(0x252525))
-        .cursor_pointer()
-        .hover(|style| style.bg(rgb(0x333333)))
+        .bg(cx.theme().secondary)
         .child(
             div()
                 .size(px(20.))
@@ -1428,22 +1243,46 @@ fn settings_row(
                 .justify_center()
                 .child(
                     gpui::svg()
-                        .path(icon_path)
+                        .path("icons/appearance.svg")
                         .size(px(18.))
-                        .text_color(rgb(0x888888)),
+                        .text_color(cx.theme().muted_foreground),
                 ),
         )
         .child(
             div()
                 .flex_1()
                 .text_sm()
-                .text_color(rgb(0xe0e0e0))
-                .child(label),
+                .text_color(cx.theme().foreground)
+                .child("Dark Mode"),
         )
         .child(
-            gpui::svg()
-                .path("chevron-right.svg")
-                .size(px(16.))
-                .text_color(rgb(0x666666)),
+            Switch::new("dark-mode-switch")
+                .checked(is_dark)
+                .on_click(cx.listener(move |_this, checked: &bool, window, cx| {
+                    let theme_name = if *checked {
+                        SharedString::from(DEFAULT_DARK_THEME)
+                    } else {
+                        SharedString::from(DEFAULT_LIGHT_THEME)
+                    };
+                    let registry = ThemeRegistry::global(cx);
+                    if let Some(theme) = registry.themes().get(&theme_name).cloned() {
+                        let mode = theme.mode;
+                        let name = theme.name.to_string();
+                        cx.update_global(|app: &mut AppStore, _| {
+                            app.config.theme = Some(name.clone());
+                            if let Err(e) = app.config.save() {
+                                eprintln!("[theme] failed to save theme: {}", e);
+                            }
+                        });
+                        let global_theme = Theme::global_mut(cx);
+                        if mode.is_dark() {
+                            global_theme.dark_theme = theme;
+                        } else {
+                            global_theme.light_theme = theme;
+                        }
+                        Theme::change(mode, Some(window), cx);
+                        cx.refresh_windows();
+                    }
+                })),
         )
 }

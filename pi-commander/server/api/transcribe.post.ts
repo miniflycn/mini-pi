@@ -2,37 +2,6 @@ import OpenAI from 'openai'
 
 const MODEL = 'custom-xiaomi/mimo-v2.5-asr'
 
-function parseDataUrl(dataUrl: string): { mimeType: string, base64: string, format: string } {
-  const splitIndex = dataUrl.indexOf(';base64,')
-  if (!dataUrl.startsWith('data:') || splitIndex === -1) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: 'Invalid dataUrl format.'
-    })
-  }
-
-  const mimeType = dataUrl.slice('data:'.length, splitIndex)
-  const base64 = dataUrl.slice(splitIndex + ';base64,'.length)
-
-  if (!mimeType || !base64) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: 'Invalid dataUrl: missing MIME type or base64 data.'
-    })
-  }
-
-  let format = 'wav'
-  if (mimeType.includes('webm')) {
-    format = 'webm'
-  } else if (mimeType.includes('mp4') || mimeType.includes('m4a') || mimeType.includes('mp3')) {
-    format = 'mp3'
-  } else if (mimeType.includes('wav')) {
-    format = 'wav'
-  }
-
-  return { mimeType, base64, format }
-}
-
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const dataUrl = body?.dataUrl
@@ -82,7 +51,7 @@ export default defineEventHandler(async (event) => {
         language: 'auto'
       },
       stream: false
-    } as any)
+    } as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming)
 
     const content = result.choices[0]?.message?.content
     if (typeof content !== 'string' || !content.trim()) {

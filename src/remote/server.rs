@@ -20,8 +20,8 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::remote::auth::require_bearer_token;
 use crate::remote::types::{
-    CommandEnvelope, CreateThreadBody, RemoteCommand, RemoteResponse, SendMessageBody,
-    SetModelBody, SetThinkingLevelBody, SetWorkspaceBody,
+    CommandEnvelope, CreateThreadBody, DownloadFileBody, RemoteCommand, RemoteResponse,
+    SendMessageBody, SetModelBody, SetThinkingLevelBody, SetWorkspaceBody,
 };
 
 const BODY_LIMIT_BYTES: usize = 1024 * 1024; // 1 MiB
@@ -118,6 +118,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/threads/:id/model", post(set_model))
         .route("/threads/:id/thinking-level", post(set_thinking_level))
         .route("/threads/:id/workspace", post(set_workspace))
+        .route("/files/download", post(download_file))
         .layer(DefaultBodyLimit::max(BODY_LIMIT_BYTES))
         .layer(cors)
         .layer(middleware::from_fn_with_state(
@@ -348,6 +349,62 @@ async fn set_workspace(
     json_response(http_status_for(&value, 200), value)
 }
 
+async fn download_file(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+    let payload: DownloadFileBody = match parse_json_body(&body) {
+        Ok(p) => p,
+        Err(response) => return response.into(),
+    };
+    let value = send_command(
+        RemoteCommand::DownloadFile {
+            path: payload.path,
+            mime_type: payload.mime_type,
+        },
+        &state.command_sender,
+    )
+    .await;
+
+    if value.get("error").is_some() {
+        return json_response(http_status_for(&value, 200), value);
+    }
+
+    let name = value
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("download");
+    let mime_type = value
+        .get("mime_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("application/octet-stream");
+    let data = match value.get("data").and_then(|v| v.as_str()).and_then(|s| {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.decode(s).ok()
+    }) {
+        Some(bytes) => bytes,
+        None => {
+            return json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "invalid file data" }),
+            );
+        }
+    };
+
+    let mut response = (StatusCode::OK, data).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_str(mime_type)
+            .unwrap_or_else(|_| header::HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        header::HeaderValue::from_str(&format!("attachment; filename=\"{}\"", name))
+            .unwrap_or_else(|_| {
+                header::HeaderValue::from_static("attachment; filename=\"download\"")
+            }),
+    );
+    response
+}
+
 async fn send_command(
     command: RemoteCommand,
     command_sender: &mpsc::UnboundedSender<CommandEnvelope>,
@@ -469,6 +526,7 @@ mod tests {
     }
 
     fn spawn_dummy_controller(mut rx: tokio::sync::mpsc::UnboundedReceiver<CommandEnvelope>) {
+        use base64::Engine;
         std::thread::spawn(move || {
             while let Some(envelope) = block_on(rx.recv()) {
                 let value = match envelope.command {
@@ -564,6 +622,15 @@ mod tests {
                             ]
                         })
                     }
+                    RemoteCommand::DownloadFile { mime_type, .. } => {
+                        let data = base64::engine::general_purpose::STANDARD.encode("hello file");
+                        json!({
+                            "name": "report.txt",
+                            "mime_type": mime_type.unwrap_or_else(|| "text/plain".to_string()),
+                            "size": data.len(),
+                            "data": data,
+                        })
+                    }
                     _ => json!({ "error": "unexpected command" }),
                 };
                 let _ = envelope.respond_to.send(value);
@@ -616,6 +683,46 @@ mod tests {
             .send()
             .expect("request should succeed");
         assert_eq!(response.status(), 200);
+    }
+
+    #[test]
+    fn options_preflight_succeeds_without_bearer_token() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_dummy_controller(rx);
+        let (_handle, port) =
+            start(0, Some("secret".to_string()), tx).expect("server should start");
+
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .request(
+                reqwest::Method::OPTIONS,
+                &format!("http://127.0.0.1:{}/threads/1/message", port),
+            )
+            .header("Origin", "https://example.com")
+            .header("Access-Control-Request-Method", "POST")
+            .header(
+                "Access-Control-Request-Headers",
+                "authorization,content-type",
+            )
+            .send()
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), 200);
+        assert!(
+            response
+                .headers()
+                .contains_key("access-control-allow-origin"),
+            "missing CORS allow-origin header"
+        );
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-methods")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .contains("POST"),
+            "missing CORS allow-methods header"
+        );
     }
 
     #[test]
@@ -753,6 +860,43 @@ mod tests {
         assert!(body.contains("\"type\":\"text-delta\""));
         assert!(body.contains("\"id\":\"text-0\""));
         assert!(body.contains("\"delta\":\"hello\""));
+        assert_eq!(
+            body.matches("\"type\":\"text-delta\"").count(),
+            1,
+            "text deltas should be coalesced into a single event"
+        );
         assert!(body.contains("data: [DONE]"));
+    }
+
+    #[test]
+    fn download_file_returns_bytes_with_headers() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_dummy_controller(rx);
+        let (_handle, port) = start(0, None, tx).expect("server should start");
+
+        let client = reqwest::blocking::Client::new();
+        let response = client
+            .post(&format!("http://127.0.0.1:{}/files/download", port))
+            .json(&json!({ "path": "/home/user/.mini-pi/workspace/report.txt" }))
+            .send()
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .and_then(|value| value.to_str().ok()),
+            Some("text/plain")
+        );
+        assert!(
+            response
+                .headers()
+                .get("content-disposition")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("")
+                .contains("report.txt")
+        );
+        assert_eq!(response.text().expect("body should be text"), "hello file");
     }
 }

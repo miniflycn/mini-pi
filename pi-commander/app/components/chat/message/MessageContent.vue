@@ -4,6 +4,8 @@ import type { DynamicToolUIPart, UIMessage } from 'ai'
 import { isPartStreaming, isToolStreaming } from '@nuxt/ui/utils/ai'
 import { getMergedParts } from '~/utils/ai'
 
+const ChatToolChart = defineAsyncComponent(() => import('~/components/chat/tool/Chart.vue'))
+
 defineProps<{
   message: UIMessage
 }>()
@@ -31,6 +33,10 @@ defineProps<{
       <ChatToolWeather
         v-else-if="getToolName(part) === 'weather'"
         :invocation="{ ...(part as WeatherUIToolInvocation) }"
+      />
+      <ChatToolSendFile
+        v-else-if="getToolName(part) === 'send_file'"
+        :invocation="part as DynamicToolUIPart"
       />
       <UChatTool
         v-else-if="getToolName(part) === 'web_search' || getToolName(part) === 'google_search'"

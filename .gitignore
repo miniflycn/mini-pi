@@ -1,3 +1,5 @@
 /target
+/tools
+.DS_Store
 
 pi-commander/.data

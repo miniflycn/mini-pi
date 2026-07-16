@@ -1,0 +1,73 @@
+name: Build Installers
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build pi-bridge
+        shell: pwsh
+        run: |
+          cd pi-bridge
+          npm ci
+          npm run build
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          pwsh -ExecutionPolicy Bypass -File scripts\build-windows.ps1 -Version ${{ github.ref_name }}
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mini-pi-windows
+          path: target/mini-pi-*.msi
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install packaging tools
+        run: |
+          brew install create-dmg
+          cargo install cargo-bundle
+
+      - name: Build pi-bridge
+        run: |
+          cd pi-bridge
+          npm ci
+          npm run build
+
+      - name: Build macOS installer
+        run: |
+          ./scripts/build-macos.sh ${{ github.ref_name }}
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mini-pi-macos
+          path: target/mini-pi-*.dmg
